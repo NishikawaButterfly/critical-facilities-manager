@@ -112,6 +112,7 @@ Python 3.12 or newer is required.
 
 ```bash
 python -m venv .venv
+# Activate .venv with the command for your shell, then:
 python -m pip install -e ".[dev]"
 python -m pytest
 python scripts/bootstrap_admin.py your-admin-name  # first run only; prints the admin token once
