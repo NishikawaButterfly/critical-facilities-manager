@@ -21,15 +21,17 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import Engine, inspect
+from sqlalchemy import Engine, inspect, text
 
 from cfm.config import Settings
 from cfm.database import Base, build_engine
 from cfm.main import create_app
 from cfm.migrate import (
     SchemaOutOfDateError,
+    build_alembic_config,
     current_revision,
     ensure_fresh_schema,
     head_revision,
@@ -183,6 +185,50 @@ def test_ensure_fresh_schema_migrates_an_empty_database(tmp_path: Path) -> None:
     url = _sqlite_url(tmp_path, "fresh.db")
     ensure_fresh_schema(url)
     assert current_revision(url) == head_revision()
+
+
+def test_upgrade_from_0001_carries_users_to_installation_scope(tmp_path: Path) -> None:
+    """Users that existed before 0002 keep installation-wide write authority.
+
+    The pre-0002 data is created against the real 0001 schema, then migrated
+    forward; every user must come out holding exactly one installation-wide
+    site grant, so existing tokens behave exactly as they did before.
+    """
+    url = _sqlite_url(tmp_path, "carry.db")
+    config = build_alembic_config(url)
+    command.upgrade(config, "0001")
+
+    engine = build_engine(url)
+    try:
+        with engine.begin() as connection:
+            for user_id, username, role in (
+                ("user-a", "ada-eng", "engineer"),
+                ("user-b", "ben-admin", "admin"),
+            ):
+                connection.execute(
+                    text(
+                        "INSERT INTO users (id, username, display_name, role, is_active,"
+                        " created_at, updated_at) VALUES (:id, :username, :name, :role, 1,"
+                        " '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                    ),
+                    {"id": user_id, "username": username, "name": username, "role": role},
+                )
+    finally:
+        engine.dispose()
+
+    command.upgrade(config, "head")
+
+    engine = build_engine(url)
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(
+                text("SELECT user_id, site_id FROM site_grants ORDER BY user_id")
+            ).all()
+        columns = {column["name"] for column in inspect(engine).get_columns("audit_entries")}
+    finally:
+        engine.dispose()
+    assert rows == [("user-a", None), ("user-b", None)]
+    assert "scope" in columns
 
 
 def test_ensure_fresh_schema_refuses_a_pre_migration_database(tmp_path: Path) -> None:
