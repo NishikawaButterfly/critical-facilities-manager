@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from datetime import date, datetime
 from enum import Enum
 from typing import Any
@@ -9,6 +10,16 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from .models import AuditEntry
+
+current_scope: ContextVar[str | None] = ContextVar("cfm_audit_scope", default=None)
+"""The authorization scope covering the write being handled, if any.
+
+Set by :meth:`cfm.authz.SiteAccess` guards when they admit a write and read
+back by :func:`record_audit`, so services do not need a scope parameter.
+Because each request's endpoint runs in a copy of the request context, a
+value set while handling one request can never leak into another; code
+paths without a scope check (user management, seed scripts) record null.
+"""
 
 
 def jsonable(value: Any) -> Any:
@@ -36,6 +47,7 @@ def record_audit(
         entity_type=entity_type,
         entity_id=entity_id,
         action=action,
+        scope=current_scope.get(),
         before=before,
         after=after,
     )

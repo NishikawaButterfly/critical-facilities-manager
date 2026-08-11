@@ -49,6 +49,7 @@ from .models import (
     MaintenanceOrder,
     Procedure,
     PunchItem,
+    SiteGrant,
     User,
     WorkPermit,
 )
@@ -112,6 +113,8 @@ def _seed_crew(session: Session) -> dict[str, str]:
 
     The admin is recorded as the creator of every account, its own included —
     the same shape a bootstrap plus API-driven setup would leave behind.
+    Every crew member gets the default installation-wide site grant; the
+    demo campus has a single site, so scoped grants would demo nothing here.
     """
     tokens: dict[str, str] = {}
     for username, display_name, role in SEED_CREW:
@@ -567,6 +570,7 @@ def seed_demo(database_url: str | None = None) -> SeedResult:
             counts = {
                 "users": _count(session, User),
                 "api_tokens": _count(session, ApiToken),
+                "site_grants": _count(session, SiteGrant),
                 "locations": _count(session, Location),
                 "assets": _count(session, Asset),
                 "maintenance_orders": _count(session, MaintenanceOrder),

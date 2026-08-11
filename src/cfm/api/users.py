@@ -19,13 +19,26 @@ from ..schemas import (
     ApiTokenCreatedResponse,
     ApiTokenResponse,
     Page,
+    SiteGrantCreate,
+    SiteGrantResponse,
     UserCreate,
     UserResponse,
+)
+from ..services.site_grants import (
+    create_site_grant,
+    delete_site_grant,
+    get_grant,
+    list_grants,
 )
 from ..services.tokens import create_token, get_token, revoke_token
 from ..services.users import create_user, deactivate_user, get_user
 from .deps import ActorDep, PageDep, SessionDep
-from .serializers import api_token_created_response, api_token_response, user_response
+from .serializers import (
+    api_token_created_response,
+    api_token_response,
+    site_grant_response,
+    user_response,
+)
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -42,6 +55,7 @@ def create_user_endpoint(
         username=payload.username,
         display_name=payload.display_name,
         role=payload.role,
+        site_ids=payload.site_ids,
     )
     return user_response(user)
 
@@ -86,6 +100,43 @@ def deactivate_user_endpoint(
 ) -> UserResponse:
     user = get_user(session, user_id)
     return user_response(deactivate_user(session, actor, user))
+
+
+@router.get("/{user_id}/site-grants", response_model=Page[SiteGrantResponse])
+def list_site_grants(user_id: str, session: SessionDep, page: PageDep) -> Page[SiteGrantResponse]:
+    user = get_user(session, user_id)
+    grants = list_grants(session, user)
+    window = grants[page.offset : page.offset + page.limit]
+    return Page[SiteGrantResponse](
+        items=[site_grant_response(grant) for grant in window],
+        total=len(grants),
+        limit=page.limit,
+        offset=page.offset,
+    )
+
+
+@router.post("/{user_id}/site-grants", response_model=SiteGrantResponse, status_code=201)
+def create_site_grant_endpoint(
+    user_id: str,
+    payload: SiteGrantCreate,
+    session: SessionDep,
+    actor: ActorDep,
+) -> SiteGrantResponse:
+    user = get_user(session, user_id)
+    grant = create_site_grant(session, actor, user, site_id=payload.site_id)
+    return site_grant_response(grant)
+
+
+@router.delete("/{user_id}/site-grants/{grant_id}", status_code=204)
+def delete_site_grant_endpoint(
+    user_id: str,
+    grant_id: str,
+    session: SessionDep,
+    actor: ActorDep,
+) -> None:
+    user = get_user(session, user_id)
+    grant = get_grant(session, user, grant_id)
+    delete_site_grant(session, actor, grant)
 
 
 @router.post("/{user_id}/tokens", response_model=ApiTokenCreatedResponse, status_code=201)
