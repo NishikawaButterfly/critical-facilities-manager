@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -47,9 +48,15 @@ def database_url(tmp_path: Path) -> str:
     return f"sqlite:///{(tmp_path / 'test.db').as_posix()}"
 
 
-@pytest.fixture
-async def app(database_url: str) -> AsyncIterator[FastAPI]:
-    settings = Settings(database_url=database_url, docs_enabled=False, db_auto_upgrade=True)
+@asynccontextmanager
+async def build_app(database_url: str, **settings_overrides: Any) -> AsyncIterator[FastAPI]:
+    """A migrated, seeded application; overrides feed extra Settings fields."""
+    settings = Settings(
+        database_url=database_url,
+        docs_enabled=False,
+        db_auto_upgrade=True,
+        **settings_overrides,
+    )
     application = create_app(settings)
     async with application.router.lifespan_context(application):
         with application.state.session_factory() as session:
@@ -75,6 +82,12 @@ async def app(database_url: str) -> AsyncIterator[FastAPI]:
                 # scoping existed; scoped users are created per test.
                 session.add(SiteGrant(user_id=user.id, site_id=None))
             session.commit()
+        yield application
+
+
+@pytest.fixture
+async def app(database_url: str) -> AsyncIterator[FastAPI]:
+    async with build_app(database_url) as application:
         yield application
 
 

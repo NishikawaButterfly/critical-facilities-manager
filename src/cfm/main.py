@@ -13,6 +13,7 @@ from .config import Settings, get_settings
 from .database import build_engine, build_session_factory
 from .migrate import ensure_schema_current, upgrade_to_head
 from .problems import register_problem_handlers
+from .ratelimit import AuthRateLimiter
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -48,6 +49,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.settings = runtime_settings
     application.state.engine = engine
     application.state.session_factory = session_factory
+    # Per-process by design: exact for the single-process story, and with
+    # several workers each process keeps its own counters (documented in
+    # the README's rate-limiting section).
+    application.state.auth_limiter = AuthRateLimiter(
+        max_failures=runtime_settings.auth_max_failures,
+        window_seconds=runtime_settings.auth_failure_window_seconds,
+        lockout_seconds=runtime_settings.auth_lockout_seconds,
+    )
     application.add_middleware(
         CORSMiddleware,
         allow_origins=runtime_settings.cors_origins,

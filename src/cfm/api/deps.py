@@ -2,13 +2,16 @@
 
 Authentication is a bearer API token (``Authorization: Bearer <token>``)
 resolved to an active user; the authenticated username is the actor recorded
-in every audit entry. Role authorization happens at include time: routers
-sit under a dependency that either admits any authenticated reader and
-restricts writes to engineers and admins (domain routes) or requires the
-admin role outright (user and token management). Site authorization happens
-inside the endpoints: once the write's target is loaded, a
-:class:`cfm.authz.SiteAccess` check requires a grant covering the target's
-site (see :mod:`cfm.authz`).
+in every audit entry. Failed authentications are throttled per network
+source (see :mod:`cfm.ratelimit`): a locked source receives 429 before any
+token is hashed or looked up, and only failed bearer lookups count toward
+the limit — successful authentications and requests without credentials
+never do. Role authorization happens at include time: routers sit under a
+dependency that either admits any authenticated reader and restricts writes
+to engineers and admins (domain routes) or requires the admin role outright
+(user and token management). Site authorization happens inside the
+endpoints: once the write's target is loaded, a :class:`cfm.authz.SiteAccess`
+check requires a grant covering the target's site (see :mod:`cfm.authz`).
 """
 
 from __future__ import annotations
@@ -21,14 +24,23 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from ..authz import SiteAccess
+from ..config import Settings
 from ..database import get_session
 from ..domain import UserRole
-from ..errors import AuthenticationError, PermissionDeniedError
+from ..errors import AuthenticationError, PermissionDeniedError, RateLimitedError
 from ..models import User
+from ..ratelimit import AuthRateLimiter, client_source
 from ..services.tokens import resolve_token
 
 READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 WRITE_ROLES = frozenset({UserRole.ENGINEER, UserRole.ADMIN})
+
+# One constant body for every throttled response, whatever the token was:
+# the 429 must not reveal more than "this source is locked".
+RATE_LIMITED_DETAIL = (
+    "Too many failed authentication attempts from this source; "
+    "retry after the number of seconds given in the Retry-After header."
+)
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
@@ -39,15 +51,28 @@ _bearer_scheme = HTTPBearer(
 
 
 def get_current_user(
+    request: Request,
     session: SessionDep,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
 ) -> User:
+    settings: Settings = request.app.state.settings
+    limiter: AuthRateLimiter = request.app.state.auth_limiter
+    source = client_source(request, trusted_proxy=settings.trusted_proxy)
+    retry_after = limiter.retry_after(source)
+    if retry_after is not None:
+        # Cheap rejection first: a locked source is turned away before any
+        # hashing or token lookup, with or without credentials attached.
+        raise RateLimitedError(RATE_LIMITED_DETAIL, retry_after_seconds=retry_after)
     if credentials is None:
         raise AuthenticationError(
             "Authentication is required: send an API token as 'Authorization: Bearer <token>'.",
             error_code="auth.credentials_required",
         )
-    return resolve_token(session, credentials.credentials)
+    try:
+        return resolve_token(session, credentials.credentials)
+    except AuthenticationError:
+        limiter.record_failure(source)
+        raise
 
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]

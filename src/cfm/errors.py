@@ -62,6 +62,25 @@ class AuthenticationError(DomainError):
         )
 
 
+class RateLimitedError(DomainError):
+    """The source sent too many failed authentication attempts."""
+
+    def __init__(
+        self,
+        detail: str,
+        *,
+        retry_after_seconds: int,
+        error_code: str = "auth.rate_limited",
+    ) -> None:
+        super().__init__(
+            detail,
+            status_code=429,
+            error_code=error_code,
+            title="Too many requests",
+        )
+        self.retry_after_seconds = retry_after_seconds
+
+
 class PermissionDeniedError(DomainError):
     """The authenticated user is not allowed to perform the request."""
 

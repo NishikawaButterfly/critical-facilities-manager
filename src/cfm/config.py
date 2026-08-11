@@ -30,6 +30,18 @@ class Settings(BaseSettings):
             "http://localhost:5173",
         ]
     )
+    # Failed token authentications per source before the source is locked
+    # out; zero disables the limiter entirely.
+    auth_max_failures: int = Field(default=10, ge=0)
+    # Sliding window, in seconds, within which failures accumulate.
+    auth_failure_window_seconds: int = Field(default=60, ge=1)
+    # How long, in seconds, a locked source stays rejected with 429.
+    auth_lockout_seconds: int = Field(default=300, ge=1)
+    # Trust exactly one operator-controlled reverse proxy in front of the
+    # app: attribute authentication failures to the rightmost entry of
+    # X-Forwarded-For (the address the proxy appended) instead of the
+    # socket peer. Off by default because the header is client-writable.
+    trusted_proxy: bool = False
 
     @field_validator("api_prefix")
     @classmethod
