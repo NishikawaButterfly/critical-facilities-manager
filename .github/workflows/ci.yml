@@ -47,3 +47,12 @@ jobs:
 
       - name: Run tests
         run: python -m pytest
+
+      - name: Migration chain against a fresh database
+        env:
+          CFM_DATABASE_URL: sqlite:///./ci-migrations.db
+        run: |
+          alembic upgrade head
+          alembic check
+          alembic downgrade base
+          alembic upgrade head
