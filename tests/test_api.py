@@ -74,7 +74,9 @@ async def test_health_stays_public(anon_client: AsyncClient) -> None:
 
 async def test_docs_served_when_enabled(tmp_path: Path) -> None:
     database_path = (tmp_path / "docs-test.db").as_posix()
-    settings = Settings(database_url=f"sqlite:///{database_path}", docs_enabled=True)
+    settings = Settings(
+        database_url=f"sqlite:///{database_path}", docs_enabled=True, db_auto_upgrade=True
+    )
     application = create_app(settings)
     transport = ASGITransport(app=application)
     async with (

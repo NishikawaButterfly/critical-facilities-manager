@@ -37,6 +37,7 @@ from .domain import (
     UserRole,
     WorkPermitStatus,
 )
+from .migrate import ensure_fresh_schema
 from .models import (
     ApiToken,
     Asset,
@@ -551,9 +552,9 @@ def _seed_commissioning(
 def seed_demo(database_url: str | None = None) -> SeedResult:
     """Seed the demo dataset and return row counts plus the crew's tokens."""
     url = database_url or get_settings().database_url
+    ensure_fresh_schema(url)
     engine = build_engine(url)
     try:
-        Base.metadata.create_all(engine)
         session_factory = build_session_factory(engine)
         with session_factory() as session:
             if _count(session, Location) or _count(session, User):

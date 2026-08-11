@@ -10,6 +10,7 @@ def test_default_settings() -> None:
     settings = Settings(_env_file=None)
     assert settings.api_prefix == "/api/v1"
     assert settings.database_url == "sqlite:///./cfm.db"
+    assert settings.db_auto_upgrade is False
     assert settings.docs_enabled is True
     assert settings.app_version == "0.1.0"
 

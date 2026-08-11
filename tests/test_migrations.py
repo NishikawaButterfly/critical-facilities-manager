@@ -20,12 +20,21 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
 from sqlalchemy import Engine, inspect
 
+from cfm.config import Settings
 from cfm.database import Base, build_engine
-from cfm.migrate import current_revision, head_revision, upgrade_to_head
+from cfm.main import create_app
+from cfm.migrate import (
+    SchemaOutOfDateError,
+    current_revision,
+    ensure_fresh_schema,
+    head_revision,
+    upgrade_to_head,
+)
 
 
 def _sqlite_url(tmp_path: Path, name: str) -> str:
@@ -119,3 +128,70 @@ def test_upgrade_head_stamps_the_head_revision(tmp_path: Path) -> None:
     upgrade_to_head(url)
     assert head_revision() is not None
     assert current_revision(url) == head_revision()
+
+
+@pytest.mark.anyio
+async def test_startup_refuses_an_empty_unmigrated_database(tmp_path: Path) -> None:
+    """Without auto-upgrade the application must not invent a schema."""
+    settings = Settings(
+        database_url=_sqlite_url(tmp_path, "empty.db"),
+        docs_enabled=False,
+        db_auto_upgrade=False,
+    )
+    application = create_app(settings)
+    with pytest.raises(SchemaOutOfDateError, match="alembic upgrade head"):
+        async with application.router.lifespan_context(application):
+            pass  # pragma: no cover - startup must fail before this point
+
+
+@pytest.mark.anyio
+async def test_startup_refuses_a_pre_migration_schema(tmp_path: Path) -> None:
+    """A create_all database without a stamp gets the adoption message."""
+    url = _sqlite_url(tmp_path, "legacy.db")
+    engine = build_engine(url)
+    try:
+        Base.metadata.create_all(engine)
+    finally:
+        engine.dispose()
+    settings = Settings(database_url=url, docs_enabled=False, db_auto_upgrade=False)
+    application = create_app(settings)
+    with pytest.raises(SchemaOutOfDateError, match="alembic stamp 0001"):
+        async with application.router.lifespan_context(application):
+            pass  # pragma: no cover - startup must fail before this point
+
+
+@pytest.mark.anyio
+async def test_startup_auto_upgrades_when_enabled(tmp_path: Path) -> None:
+    url = _sqlite_url(tmp_path, "auto.db")
+    settings = Settings(database_url=url, docs_enabled=False, db_auto_upgrade=True)
+    application = create_app(settings)
+    async with application.router.lifespan_context(application):
+        assert current_revision(url) == head_revision()
+
+
+@pytest.mark.anyio
+async def test_startup_accepts_a_migrated_database(tmp_path: Path) -> None:
+    url = _sqlite_url(tmp_path, "migrated.db")
+    upgrade_to_head(url)
+    settings = Settings(database_url=url, docs_enabled=False, db_auto_upgrade=False)
+    application = create_app(settings)
+    async with application.router.lifespan_context(application):
+        pass
+
+
+def test_ensure_fresh_schema_migrates_an_empty_database(tmp_path: Path) -> None:
+    url = _sqlite_url(tmp_path, "fresh.db")
+    ensure_fresh_schema(url)
+    assert current_revision(url) == head_revision()
+
+
+def test_ensure_fresh_schema_refuses_a_pre_migration_database(tmp_path: Path) -> None:
+    """Migrating over unstamped tables would fail halfway; refuse instead."""
+    url = _sqlite_url(tmp_path, "legacy-fresh.db")
+    engine = build_engine(url)
+    try:
+        Base.metadata.create_all(engine)
+    finally:
+        engine.dispose()
+    with pytest.raises(SchemaOutOfDateError, match="alembic stamp 0001"):
+        ensure_fresh_schema(url)
