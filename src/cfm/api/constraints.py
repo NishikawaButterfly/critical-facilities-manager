@@ -11,7 +11,7 @@ from ..domain import ConstraintKind, ConstraintStatus
 from ..models import Constraint, ConstraintMember
 from ..schemas import ConstraintCreate, ConstraintResponse, Page
 from ..services.constraints import create_constraint, get_constraint, retire_constraint
-from .deps import ActorDep, PageDep, SessionDep
+from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
 from .serializers import constraint_response
 
 router = APIRouter(prefix="/constraints", tags=["constraints"])
@@ -22,7 +22,9 @@ def create_constraint_endpoint(
     payload: ConstraintCreate,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> ConstraintResponse:
+    access.require_installation()
     constraint = create_constraint(
         session,
         actor,
@@ -80,6 +82,8 @@ def retire_constraint_endpoint(
     constraint_id: str,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> ConstraintResponse:
+    access.require_installation()
     constraint = get_constraint(session, constraint_id)
     return constraint_response(retire_constraint(session, actor, constraint))

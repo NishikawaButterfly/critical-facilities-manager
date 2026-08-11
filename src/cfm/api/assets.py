@@ -7,11 +7,12 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
+from ..authz import site_of_location_id
 from ..domain import AssetCriticality, AssetStatus
 from ..models import Asset
 from ..schemas import AssetCreate, AssetResponse, AssetTransition, AssetUpdate, Page
 from ..services.assets import create_asset, get_asset, transition_asset, update_asset
-from .deps import ActorDep, PageDep, SessionDep
+from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
 from .serializers import asset_response
 
 router = APIRouter(prefix="/assets", tags=["assets"])
@@ -22,7 +23,9 @@ def create_asset_endpoint(
     payload: AssetCreate,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> AssetResponse:
+    access.require_site(site_of_location_id(session, payload.location_id))
     asset = create_asset(
         session,
         actor,
@@ -83,9 +86,14 @@ def update_asset_endpoint(
     payload: AssetUpdate,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> AssetResponse:
     asset = get_asset(session, asset_id)
+    access.require_site(asset.site_id)
     updates = payload.model_dump(exclude_unset=True, exclude_none=True)
+    if "location_id" in updates and updates["location_id"] != asset.location_id:
+        # Moving an asset needs authority over the destination site as well.
+        access.require_site(site_of_location_id(session, updates["location_id"]))
     return asset_response(update_asset(session, actor, asset, updates))
 
 
@@ -95,6 +103,8 @@ def transition_asset_endpoint(
     payload: AssetTransition,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> AssetResponse:
     asset = get_asset(session, asset_id)
+    access.require_site(asset.site_id)
     return asset_response(transition_asset(session, actor, asset, payload.to_status))

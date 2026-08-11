@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
+from ..authz import site_of_order_id
 from ..domain import WorkPermitStatus
 from ..models import WorkPermit
 from ..schemas import (
@@ -17,7 +18,7 @@ from ..schemas import (
     WorkPermitRevoke,
 )
 from ..services.permits import create_permit, get_permit, transition_permit
-from .deps import ActorDep, PageDep, SessionDep
+from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
 from .serializers import work_permit_response
 
 router = APIRouter(prefix="/work-permits", tags=["work-permits"])
@@ -28,7 +29,9 @@ def create_permit_endpoint(
     payload: WorkPermitCreate,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> WorkPermitResponse:
+    access.require_site(site_of_order_id(session, payload.order_id))
     permit = create_permit(
         session,
         actor,
@@ -72,8 +75,14 @@ def get_permit_endpoint(permit_id: str, session: SessionDep) -> WorkPermitRespon
 
 
 @router.post("/{permit_id}/issue", response_model=WorkPermitResponse)
-def issue_permit(permit_id: str, session: SessionDep, actor: ActorDep) -> WorkPermitResponse:
+def issue_permit(
+    permit_id: str,
+    session: SessionDep,
+    actor: ActorDep,
+    access: SiteAccessDep,
+) -> WorkPermitResponse:
     permit = get_permit(session, permit_id)
+    access.require_site(site_of_order_id(session, permit.order_id))
     return work_permit_response(transition_permit(session, actor, permit, WorkPermitStatus.ISSUED))
 
 
@@ -83,8 +92,10 @@ def close_permit(
     payload: WorkPermitClose,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> WorkPermitResponse:
     permit = get_permit(session, permit_id)
+    access.require_site(site_of_order_id(session, permit.order_id))
     return work_permit_response(
         transition_permit(
             session,
@@ -101,9 +112,11 @@ def revoke_permit(
     permit_id: str,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
     payload: WorkPermitRevoke | None = None,
 ) -> WorkPermitResponse:
     permit = get_permit(session, permit_id)
+    access.require_site(site_of_order_id(session, permit.order_id))
     reason = payload.reason if payload is not None else None
     return work_permit_response(
         transition_permit(

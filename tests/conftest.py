@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from cfm.config import Settings
 from cfm.main import create_app
-from cfm.models import ApiToken, User
+from cfm.models import ApiToken, SiteGrant, User
 from cfm.services.tokens import hash_token
 
 TEST_USERS: tuple[tuple[str, str, str], ...] = (
@@ -71,6 +71,9 @@ async def app(database_url: str) -> AsyncIterator[FastAPI]:
                         revoked=False,
                     )
                 )
+                # The installation-wide grant every user held before site
+                # scoping existed; scoped users are created per test.
+                session.add(SiteGrant(user_id=user.id, site_id=None))
             session.commit()
         yield application
 

@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
+from ..authz import site_of_asset_id
 from ..domain import IncidentSeverity, IncidentStatus
 from ..models import Incident
 from ..schemas import (
@@ -24,7 +25,7 @@ from ..services.incidents import (
     get_incident,
     transition_incident,
 )
-from .deps import ActorDep, PageDep, SessionDep
+from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
 from .serializers import incident_response, order_response
 
 router = APIRouter(prefix="/incidents", tags=["incidents"])
@@ -35,7 +36,9 @@ def create_incident_endpoint(
     payload: IncidentCreate,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> IncidentResponse:
+    access.require_site(site_of_asset_id(session, payload.asset_id))
     incident = create_incident(
         session,
         actor,
@@ -88,8 +91,10 @@ def start_investigation(
     incident_id: str,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> IncidentResponse:
     incident = get_incident(session, incident_id)
+    access.require_site(site_of_asset_id(session, incident.asset_id))
     return incident_response(
         transition_incident(session, actor, incident, IncidentStatus.INVESTIGATING)
     )
@@ -101,8 +106,10 @@ def resolve_incident(
     payload: IncidentResolve,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> IncidentResponse:
     incident = get_incident(session, incident_id)
+    access.require_site(site_of_asset_id(session, incident.asset_id))
     return incident_response(
         transition_incident(
             session,
@@ -119,9 +126,11 @@ def dismiss_incident(
     incident_id: str,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
     payload: IncidentDismiss | None = None,
 ) -> IncidentResponse:
     incident = get_incident(session, incident_id)
+    access.require_site(site_of_asset_id(session, incident.asset_id))
     reason = payload.reason if payload is not None else None
     return incident_response(
         transition_incident(
@@ -144,8 +153,10 @@ def create_corrective_order_endpoint(
     payload: IncidentCorrectiveOrder,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> MaintenanceOrderResponse:
     incident = get_incident(session, incident_id)
+    access.require_site(site_of_asset_id(session, incident.asset_id))
     order = create_corrective_order(
         session,
         actor,
