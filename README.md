@@ -93,6 +93,9 @@ development and interfaces may change without notice.
 - **Problem-details errors** — every error body follows the RFC 9457 shape
   (see [Problem details](#problem-details)).
 - **OpenAPI docs** — interactive documentation at `/docs` when enabled.
+- **Migrated schema** — Alembic owns the database schema; the application
+  refuses to start when the database is not at the head revision (see
+  [Database migrations](#database-migrations)).
 
 ## What does not exist yet
 
@@ -103,7 +106,6 @@ development and interfaces may change without notice.
   way yet to make someone an engineer on one campus and a viewer on another.
 - File and photo evidence on commissioning tests. Evidence is limited to
   structured text notes until object storage lands.
-- Database migrations. Tables are created idempotently at startup.
 - A frontend.
 
 ## Local development
@@ -138,10 +140,43 @@ Settings use the `CFM_` prefix (see `.env.example`):
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `CFM_DATABASE_URL` | `sqlite:///./cfm.db` | SQLAlchemy database URL |
+| `CFM_DB_AUTO_UPGRADE` | `false` | Run pending migrations at startup instead of refusing to start |
 | `CFM_DOCS_ENABLED` | `true` | Enable OpenAPI browser pages |
 | `CFM_CORS_ORIGINS` | localhost origins | JSON array of allowed web origins |
 
 For PostgreSQL, use a URL such as `postgresql+psycopg://cfm:cfm@db:5432/cfm`.
+
+## Database migrations
+
+The schema is owned by [Alembic](https://alembic.sqlalchemy.org/); the
+application does not create tables at startup. At boot it compares the
+database's stamped revision against the newest migration and refuses to
+start when they differ, printing exactly what to run — so a deployment
+never serves a schema it does not understand. Setting
+`CFM_DB_AUTO_UPGRADE=true` makes the application run pending migrations
+itself at startup instead; that is convenient for a single process over
+SQLite, but with several processes or a shared PostgreSQL database prefer
+running the upgrade once as a deploy step.
+
+The migration environment reads the database URL from the same settings as
+the API (`CFM_DATABASE_URL`, `.env`, or the SQLite default), so `alembic`
+commands target whatever database the application would serve.
+
+- Fresh database: `alembic upgrade head`. The bootstrap and demo seed
+  scripts do this themselves when the database is empty, which is why the
+  quickstart above needs no separate migration step.
+- After deploying new code: `alembic upgrade head`.
+- A database created by a release that predates migrations (tables built by
+  `create_all` at startup, no `alembic_version` table): verify it matches
+  the current models, adopt it once with `alembic stamp 0001`, and use
+  `alembic upgrade head` from then on.
+- New migration during development: change the models, run
+  `alembic revision --autogenerate -m "describe the change"`, and review
+  the generated script — autogenerate is a starting point, not a guarantee.
+
+The test suite enforces that a freshly migrated database matches the
+models exactly and that autogenerate detects no drift at head, so a model
+change without a matching migration fails CI.
 
 ## Demo dataset
 

@@ -14,8 +14,9 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 
 from .config import get_settings
-from .database import Base, build_engine, build_session_factory
+from .database import build_engine, build_session_factory
 from .domain import UserRole
+from .migrate import ensure_fresh_schema
 from .models import User
 from .services.tokens import create_token
 from .services.users import create_user
@@ -44,9 +45,9 @@ def bootstrap_admin(
 ) -> BootstrapResult:
     """Create the first admin plus one API token and return the secret once."""
     url = database_url or get_settings().database_url
+    ensure_fresh_schema(url)
     engine = build_engine(url)
     try:
-        Base.metadata.create_all(engine)
         session_factory = build_session_factory(engine)
         with session_factory() as session:
             existing = session.scalar(select(func.count()).select_from(User)) or 0

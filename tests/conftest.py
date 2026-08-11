@@ -49,7 +49,7 @@ def database_url(tmp_path: Path) -> str:
 
 @pytest.fixture
 async def app(database_url: str) -> AsyncIterator[FastAPI]:
-    settings = Settings(database_url=database_url, docs_enabled=False)
+    settings = Settings(database_url=database_url, docs_enabled=False, db_auto_upgrade=True)
     application = create_app(settings)
     async with application.router.lifespan_context(application):
         with application.state.session_factory() as session:

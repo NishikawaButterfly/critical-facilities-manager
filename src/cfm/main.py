@@ -10,7 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api import router
 from .config import Settings, get_settings
-from .database import Base, build_engine, build_session_factory
+from .database import build_engine, build_session_factory
+from .migrate import ensure_schema_current, upgrade_to_head
 from .problems import register_problem_handlers
 
 
@@ -21,7 +22,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        Base.metadata.create_all(engine)
+        # The schema belongs to the migration chain, not to startup: by
+        # default the application refuses to serve a database that is not
+        # at the head revision and tells the operator how to migrate.
+        # CFM_DB_AUTO_UPGRADE=true opts into running the migrations here
+        # instead, for single-process deployments.
+        if runtime_settings.db_auto_upgrade:
+            upgrade_to_head(runtime_settings.database_url)
+        else:
+            ensure_schema_current(runtime_settings.database_url)
         yield
         engine.dispose()
 
