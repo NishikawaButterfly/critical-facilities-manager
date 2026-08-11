@@ -340,11 +340,34 @@ class ApiToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class SiteGrant(Base):
+    """Where one user's write authority applies.
+
+    The user's role says *what* they may do; their grants say *where*. A row
+    with ``site_id`` set covers that site's whole subtree; a row with
+    ``site_id`` null is an installation-wide grant covering every site,
+    current and future. Objects that belong to no single site require an
+    installation-wide grant to write. Reads are not scoped.
+    """
+
+    __tablename__ = "site_grants"
+    __table_args__ = (UniqueConstraint("user_id", "site_id", name="uq_site_grants_user_site"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_public_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True)
+    site_id: Mapped[str | None] = mapped_column(
+        ForeignKey("locations.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 class AuditEntry(Base):
     """Append-only audit trail. Rows are only ever inserted, never changed.
 
     Nothing in the code base updates or deletes these rows, and the API only
-    exposes reads.
+    exposes reads. ``scope`` records the authorization scope a domain write
+    was covered by ("installation" or "site:<id>"); it is null for actions
+    that carry no site-scope check, such as user and token management.
     """
 
     __tablename__ = "audit_entries"
@@ -357,5 +380,6 @@ class AuditEntry(Base):
     entity_type: Mapped[str] = mapped_column(String(32), index=True)
     entity_id: Mapped[str] = mapped_column(String(36), index=True)
     action: Mapped[str] = mapped_column(String(32), index=True)
+    scope: Mapped[str | None] = mapped_column(String(64), nullable=True)
     before: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     after: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

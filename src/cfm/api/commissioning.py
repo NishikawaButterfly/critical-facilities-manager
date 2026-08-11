@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
+from ..authz import site_of_asset_id
 from ..domain import CommissioningTestStatus
 from ..models import CommissioningTest
 from ..schemas import (
@@ -25,7 +26,7 @@ from ..services.commissioning import (
     get_test,
     record_result,
 )
-from .deps import ActorDep, PageDep, SessionDep
+from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
 from .serializers import commissioning_test_response, punch_item_response
 
 router = APIRouter(prefix="/commissioning-tests", tags=["commissioning-tests"])
@@ -36,7 +37,9 @@ def create_test_endpoint(
     payload: CommissioningTestCreate,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> CommissioningTestResponse:
+    access.require_site(site_of_asset_id(session, payload.asset_id))
     test = create_test(
         session,
         actor,
@@ -88,8 +91,10 @@ def add_evidence_endpoint(
     payload: CommissioningEvidenceCreate,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> CommissioningTestResponse:
     test = get_test(session, test_id)
+    access.require_site(site_of_asset_id(session, test.asset_id))
     return commissioning_test_response(add_evidence(session, actor, test, payload.note))
 
 
@@ -99,8 +104,10 @@ def record_pass(
     payload: CommissioningTestRecord,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> CommissioningTestResponse:
     test = get_test(session, test_id)
+    access.require_site(site_of_asset_id(session, test.asset_id))
     return commissioning_test_response(
         record_result(
             session,
@@ -119,8 +126,10 @@ def record_fail(
     payload: CommissioningTestRecord,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> CommissioningTestResponse:
     test = get_test(session, test_id)
+    access.require_site(site_of_asset_id(session, test.asset_id))
     return commissioning_test_response(
         record_result(
             session,
@@ -139,8 +148,10 @@ def create_punch_item_endpoint(
     payload: CommissioningTestPunchItem,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> PunchItemResponse:
     test = get_test(session, test_id)
+    access.require_site(site_of_asset_id(session, test.asset_id))
     item = create_punch_item_from_test(
         session,
         actor,

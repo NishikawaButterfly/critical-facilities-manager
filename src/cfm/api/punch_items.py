@@ -8,11 +8,12 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 from sqlalchemy import ColumnElement, and_, func, select
 
+from ..authz import site_of_asset_id, site_of_location_id, site_of_punch_item
 from ..domain import PunchItemCategory, PunchItemSeverity, PunchItemStatus
 from ..models import PunchItem
 from ..schemas import Page, PunchItemClose, PunchItemCreate, PunchItemResponse
 from ..services.punch_items import create_punch_item, get_punch_item, transition_punch_item
-from .deps import ActorDep, PageDep, SessionDep
+from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
 from .serializers import punch_item_response
 
 router = APIRouter(prefix="/punch-items", tags=["punch-items"])
@@ -31,7 +32,12 @@ def create_punch_item_endpoint(
     payload: PunchItemCreate,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> PunchItemResponse:
+    if payload.asset_id is not None:
+        access.require_site(site_of_asset_id(session, payload.asset_id))
+    elif payload.location_id is not None:
+        access.require_site(site_of_location_id(session, payload.location_id))
     item = create_punch_item(
         session,
         actor,
@@ -103,8 +109,10 @@ def start_punch_item(
     punch_item_id: str,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> PunchItemResponse:
     item = get_punch_item(session, punch_item_id)
+    access.require_site(site_of_punch_item(session, item))
     return punch_item_response(
         transition_punch_item(session, actor, item, PunchItemStatus.IN_PROGRESS)
     )
@@ -116,8 +124,10 @@ def close_punch_item(
     payload: PunchItemClose,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> PunchItemResponse:
     item = get_punch_item(session, punch_item_id)
+    access.require_site(site_of_punch_item(session, item))
     return punch_item_response(
         transition_punch_item(
             session,

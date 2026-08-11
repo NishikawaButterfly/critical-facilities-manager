@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..audit import record_audit
 from ..domain import LOCATION_PARENT_KIND, LocationKind
 from ..errors import ConflictError, NotFoundError, RuleViolationError
-from ..models import Asset, Location
+from ..models import Asset, Location, SiteGrant
 
 ENTITY_TYPE = "location"
 
@@ -178,6 +178,15 @@ def delete_location(session: Session, actor: str, location: Location) -> None:
         raise ConflictError(
             f"Location {location.code!r} still has assets assigned to it.",
             error_code="location.has_assets",
+        )
+    grant_count = session.scalar(
+        select(func.count()).select_from(SiteGrant).where(SiteGrant.site_id == location.id)
+    )
+    if grant_count:
+        raise ConflictError(
+            f"Location {location.code!r} is still referenced by site grants; "
+            "delete those grants first.",
+            error_code="location.has_site_grants",
         )
     record_audit(
         session,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from ..authz import scope_label
 from ..domain import (
     AssetCriticality,
     AssetStatus,
@@ -35,6 +36,7 @@ from ..models import (
     MaintenanceOrder,
     Procedure,
     PunchItem,
+    SiteGrant,
     User,
     WorkPermit,
 )
@@ -51,6 +53,7 @@ from ..schemas import (
     MaintenanceOrderResponse,
     ProcedureResponse,
     PunchItemResponse,
+    SiteGrantResponse,
     UserResponse,
     WorkPermitResponse,
 )
@@ -94,6 +97,16 @@ def api_token_created_response(token: ApiToken, secret: str) -> ApiTokenCreatedR
         revoked=token.revoked,
         created_at=ensure_utc(token.created_at),
         token=secret,
+    )
+
+
+def site_grant_response(grant: SiteGrant) -> SiteGrantResponse:
+    return SiteGrantResponse(
+        id=grant.id,
+        user_id=grant.user_id,
+        site_id=grant.site_id,
+        scope=scope_label(grant.site_id),
+        created_at=ensure_utc(grant.created_at),
     )
 
 
@@ -251,6 +264,7 @@ def audit_entry_response(entry: AuditEntry) -> AuditEntryResponse:
         entity_type=entry.entity_type,
         entity_id=entry.entity_id,
         action=entry.action,
+        scope=entry.scope,
         before=entry.before,
         after=entry.after,
     )

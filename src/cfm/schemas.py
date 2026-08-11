@@ -54,6 +54,13 @@ class UserCreate(BaseModel):
     )
     display_name: str = Field(min_length=1, max_length=255)
     role: UserRole
+    site_ids: list[str] | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "Sites the user's write authority is limited to; omit for an installation-wide grant."
+        ),
+    )
 
 
 class UserResponse(BaseModel):
@@ -86,6 +93,23 @@ class ApiTokenResponse(BaseModel):
 
 class ApiTokenCreatedResponse(ApiTokenResponse):
     token: str = Field(description="The token secret, shown exactly once at creation.")
+
+
+class SiteGrantCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    site_id: str | None = Field(
+        default=None,
+        description="The covered site, or null for an installation-wide grant.",
+    )
+
+
+class SiteGrantResponse(BaseModel):
+    id: str
+    user_id: str
+    site_id: str | None
+    scope: str = Field(description='"installation" or "site:<id>".')
+    created_at: datetime
 
 
 class LocationCreate(BaseModel):
@@ -425,5 +449,11 @@ class AuditEntryResponse(BaseModel):
     entity_type: str
     entity_id: str
     action: str
+    scope: str | None = Field(
+        description=(
+            'The authorization scope that covered the write ("installation" or '
+            '"site:<id>"); null for actions that carry no site-scope check.'
+        )
+    )
     before: dict[str, Any] | None
     after: dict[str, Any] | None

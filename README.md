@@ -29,6 +29,17 @@ development and interfaces may change without notice.
   separation-of-duties rules (approver ≠ author, issuer ≠ requester,
   witness ≠ executor, verifier ≠ starter) compare authenticated
   identities, not header values.
+- **Site-scoped write authority** — a user's role says *what* they may do;
+  their site grants say *where*. A grant covers one site's whole subtree, or
+  the whole installation (`site_id` null) — the default for new users, and
+  what every user existing before migration `0002` was carried to, so
+  behavior did not change for existing tokens. Domain writes resolve the
+  target's owning site (an order follows its asset, a permit its order, a
+  punch item its asset or location) and require a covering grant. Objects
+  that belong to no single site — procedures, constraints, creating or
+  deleting a site itself — require an installation-wide grant, and moving an
+  asset across sites requires authority over both. Every audit entry records
+  the scope that covered the write (`installation` or `site:<id>`).
 - **Location hierarchy** — site → building → floor → room. The adjacency rule
   is enforced: each kind must hang from exactly the kind above it (a room
   cannot be attached directly to a building). Codes are unique among siblings.
@@ -102,8 +113,13 @@ development and interfaces may change without notice.
 - Sessions and password login. Authentication is API-token-only; interactive
   login (and any password or SSO story) arrives together with a future
   frontend.
-- Per-site scoping. A role applies to the whole installation — there is no
-  way yet to make someone an engineer on one campus and a viewer on another.
+- Site-scoped reads. Site grants scope writes only; every authenticated
+  user still reads everything, installation-wide. A commissioning witness
+  is also only a validated reference — the scope check applies to the
+  executor recording the result, not to the named witness.
+- Site-scoped administration. User, token, and grant management is gated by
+  the admin role alone; an admin's own site grants scope their domain
+  writes, not whom they can manage.
 - File and photo evidence on commissioning tests. Evidence is limited to
   structured text notes until object storage lands.
 - A frontend.
@@ -209,7 +225,10 @@ already contains locations or users.
 All routes live under `/api/v1`. Except `/health`, every request must send
 `Authorization: Bearer <token>`. Any authenticated user may issue GET
 requests; everything else requires the engineer or admin role, and the
-`/users` rows below require admin outright. List endpoints return
+`/users` rows below require admin outright. Domain writes additionally
+require a site grant covering the target's site — an installation-wide
+grant for procedures, constraints, and sites themselves (see the
+site-scoped write authority bullet above). List endpoints return
 `{items, total, limit, offset}` and accept `limit` and `offset` query
 parameters.
 
@@ -217,18 +236,21 @@ parameters.
 | --- | --- | --- |
 | GET | `/health` | Liveness and database check (no auth) |
 | GET | `/me` | The authenticated caller's own user |
-| POST | `/users` | Create a user (admin) |
+| POST | `/users` | Create a user, optionally scoped to sites via `site_ids` (admin) |
 | GET | `/users` | List users (`role`, `is_active` filters; admin) |
 | GET | `/users/{id}` | Fetch one user (admin) |
 | POST | `/users/{id}/deactivate` | Deactivate a user; the last active admin is protected (admin) |
 | POST | `/users/{id}/tokens` | Mint an API token; the secret appears once (admin) |
 | GET | `/users/{id}/tokens` | List token metadata — never secrets (admin) |
 | POST | `/users/{id}/tokens/{token_id}/revoke` | Revoke a token (admin) |
+| GET | `/users/{id}/site-grants` | List a user's site grants (admin) |
+| POST | `/users/{id}/site-grants` | Grant write authority on a site, or installation-wide with a null `site_id` (admin) |
+| DELETE | `/users/{id}/site-grants/{grant_id}` | Delete a grant; authority narrows immediately (admin) |
 | POST | `/locations` | Create a location |
 | GET | `/locations` | List locations (`kind`, `parent_id` filters) |
 | GET | `/locations/{id}` | Fetch one location |
 | PATCH | `/locations/{id}` | Rename or recode a location |
-| DELETE | `/locations/{id}` | Delete a childless, asset-free location |
+| DELETE | `/locations/{id}` | Delete a childless, asset-free location no grant references |
 | POST | `/assets` | Create an asset |
 | GET | `/assets` | List assets (`location_id`, `site_id`, `status`, `criticality` filters) |
 | GET | `/assets/{id}` | Fetch one asset |
@@ -303,7 +325,8 @@ Authentication failures return `401` with a `WWW-Authenticate: Bearer`
 header and either `auth.credentials_required` (no usable header) or
 `auth.invalid_token` — the latter is deliberately vague so responses do not
 reveal whether a token exists, is revoked, or has expired. Role failures
-return `403` with `auth.forbidden`.
+return `403` with `auth.forbidden`; a write whose target site no grant
+covers returns `403` with `auth.scope_forbidden`.
 
 ## License
 

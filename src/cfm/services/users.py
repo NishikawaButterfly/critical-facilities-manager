@@ -19,6 +19,7 @@ from ..audit import record_audit
 from ..domain import UserRole
 from ..errors import ConflictError, NotFoundError, RuleViolationError
 from ..models import User
+from .site_grants import create_initial_grants
 
 ENTITY_TYPE = "user"
 
@@ -69,7 +70,16 @@ def create_user(
     username: str,
     display_name: str,
     role: UserRole,
+    site_ids: list[str] | None = None,
 ) -> User:
+    """Create a user together with their initial site grants.
+
+    ``site_ids`` limits the user's write authority to those sites; the
+    default is a single installation-wide grant, which is what every user
+    had before site scoping existed. The grants are part of this one
+    creation action, so they appear in the user's "created" audit entry
+    (as scope labels) instead of as entries of their own.
+    """
     validate_username(username)
     existing = session.scalar(select(User).where(User.username == username))
     if existing is not None:
@@ -85,6 +95,7 @@ def create_user(
     )
     session.add(user)
     session.flush()
+    site_scopes = create_initial_grants(session, user, site_ids)
     record_audit(
         session,
         actor=actor,
@@ -92,7 +103,7 @@ def create_user(
         entity_id=user.id,
         action="created",
         before=None,
-        after=user_snapshot(user),
+        after={**user_snapshot(user), "site_scopes": site_scopes},
     )
     session.commit()
     return user

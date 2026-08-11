@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
+from ..authz import site_of_location, site_of_location_id
 from ..domain import LocationKind
 from ..models import Location
 from ..schemas import LocationCreate, LocationResponse, LocationUpdate, Page
@@ -16,7 +17,7 @@ from ..services.locations import (
     get_location,
     update_location,
 )
-from .deps import ActorDep, PageDep, SessionDep
+from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
 from .serializers import location_response
 
 router = APIRouter(prefix="/locations", tags=["locations"])
@@ -27,7 +28,13 @@ def create_location_endpoint(
     payload: LocationCreate,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> LocationResponse:
+    if payload.kind is LocationKind.SITE:
+        # Creating a site changes the set of scopable sites.
+        access.require_installation()
+    elif payload.parent_id is not None:
+        access.require_site(site_of_location_id(session, payload.parent_id))
     location = create_location(
         session,
         actor,
@@ -77,8 +84,10 @@ def update_location_endpoint(
     payload: LocationUpdate,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> LocationResponse:
     location = get_location(session, location_id)
+    access.require_site(site_of_location(session, location))
     updates = payload.model_dump(exclude_unset=True, exclude_none=True)
     return location_response(update_location(session, actor, location, updates))
 
@@ -88,6 +97,12 @@ def delete_location_endpoint(
     location_id: str,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> None:
     location = get_location(session, location_id)
+    if location.kind == LocationKind.SITE.value:
+        # Removing a site changes the set of scopable sites.
+        access.require_installation()
+    else:
+        access.require_site(site_of_location(session, location))
     delete_location(session, actor, location)

@@ -19,7 +19,7 @@ from ..services.procedures import (
     retire_procedure,
     update_procedure,
 )
-from .deps import ActorDep, PageDep, SessionDep
+from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
 from .serializers import procedure_response
 
 router = APIRouter(prefix="/procedures", tags=["procedures"])
@@ -30,7 +30,9 @@ def create_procedure_endpoint(
     payload: ProcedureCreate,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> ProcedureResponse:
+    access.require_installation()
     procedure = create_procedure(
         session,
         actor,
@@ -85,7 +87,9 @@ def update_procedure_endpoint(
     payload: ProcedureUpdate,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> ProcedureResponse:
+    access.require_installation()
     procedure = get_procedure(session, procedure_id)
     updates = payload.model_dump(exclude_unset=True, exclude_none=True)
     return procedure_response(update_procedure(session, actor, procedure, updates))
@@ -96,7 +100,9 @@ def approve_procedure_endpoint(
     procedure_id: str,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> ProcedureResponse:
+    access.require_installation()
     procedure = get_procedure(session, procedure_id)
     return procedure_response(approve_procedure(session, actor, procedure))
 
@@ -106,7 +112,9 @@ def retire_procedure_endpoint(
     procedure_id: str,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> ProcedureResponse:
+    access.require_installation()
     procedure = get_procedure(session, procedure_id)
     return procedure_response(retire_procedure(session, actor, procedure))
 
@@ -116,6 +124,8 @@ def create_new_version_endpoint(
     procedure_id: str,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> ProcedureResponse:
+    access.require_installation()
     procedure = get_procedure(session, procedure_id)
     return procedure_response(create_new_version(session, actor, procedure))

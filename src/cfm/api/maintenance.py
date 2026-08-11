@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
+from ..authz import site_of_asset_id
 from ..domain import MaintenanceOrderStatus, MaintenanceOrderType
 from ..models import MaintenanceOrder
 from ..schemas import (
@@ -23,7 +24,7 @@ from ..services.maintenance import (
     transition_order,
     update_order,
 )
-from .deps import ActorDep, PageDep, SessionDep
+from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
 from .serializers import order_response
 
 router = APIRouter(prefix="/maintenance-orders", tags=["maintenance-orders"])
@@ -34,7 +35,9 @@ def create_order_endpoint(
     payload: MaintenanceOrderCreate,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> MaintenanceOrderResponse:
+    access.require_site(site_of_asset_id(session, payload.asset_id))
     order = create_order(
         session,
         actor,
@@ -91,21 +94,35 @@ def update_order_endpoint(
     payload: MaintenanceOrderUpdate,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> MaintenanceOrderResponse:
     order = get_order(session, order_id)
+    access.require_site(site_of_asset_id(session, order.asset_id))
     updates = payload.model_dump(exclude_unset=True, exclude_none=True)
     return order_response(update_order(session, actor, order, updates))
 
 
 @router.post("/{order_id}/schedule", response_model=MaintenanceOrderResponse)
-def schedule_order(order_id: str, session: SessionDep, actor: ActorDep) -> MaintenanceOrderResponse:
+def schedule_order(
+    order_id: str,
+    session: SessionDep,
+    actor: ActorDep,
+    access: SiteAccessDep,
+) -> MaintenanceOrderResponse:
     order = get_order(session, order_id)
+    access.require_site(site_of_asset_id(session, order.asset_id))
     return order_response(transition_order(session, actor, order, MaintenanceOrderStatus.SCHEDULED))
 
 
 @router.post("/{order_id}/start", response_model=MaintenanceOrderResponse)
-def start_order(order_id: str, session: SessionDep, actor: ActorDep) -> MaintenanceOrderResponse:
+def start_order(
+    order_id: str,
+    session: SessionDep,
+    actor: ActorDep,
+    access: SiteAccessDep,
+) -> MaintenanceOrderResponse:
     order = get_order(session, order_id)
+    access.require_site(site_of_asset_id(session, order.asset_id))
     return order_response(
         transition_order(session, actor, order, MaintenanceOrderStatus.IN_PROGRESS)
     )
@@ -117,8 +134,10 @@ def complete_order(
     payload: MaintenanceOrderComplete,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
 ) -> MaintenanceOrderResponse:
     order = get_order(session, order_id)
+    access.require_site(site_of_asset_id(session, order.asset_id))
     return order_response(
         transition_order(
             session,
@@ -135,9 +154,11 @@ def cancel_order(
     order_id: str,
     session: SessionDep,
     actor: ActorDep,
+    access: SiteAccessDep,
     payload: MaintenanceOrderCancel | None = None,
 ) -> MaintenanceOrderResponse:
     order = get_order(session, order_id)
+    access.require_site(site_of_asset_id(session, order.asset_id))
     reason = payload.reason if payload is not None else None
     return order_response(
         transition_order(
