@@ -20,9 +20,10 @@ a statement matching no rows never fires them, which is fine — no row
 changes either way. On PostgreSQL (11 or newer) a single ``plpgsql``
 function raises for whichever operation fired it, attached per table as
 one statement-level trigger, so even a zero-row UPDATE or DELETE
-statement errors. The PostgreSQL branch is not exercised by CI (no
-PostgreSQL container) and is kept trivially simple for review by
-inspection.
+statement errors. CI's PostgreSQL job runs this branch for real: the
+migration chain executes it in both directions, and the append-only
+tests run against that server, so the triggers are asserted to exist
+and to fire on the dialect the application deploys against.
 
 Alembic autogenerate cannot see triggers, so the schema drift checks
 stay green without knowing about them; ``tests/test_append_only.py``

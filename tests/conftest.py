@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+import os
+from collections.abc import AsyncIterator, Iterator
+from contextlib import ExitStack, asynccontextmanager
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import create_engine, text
+from sqlalchemy.pool import NullPool
 
 from cfm.config import Settings
 from cfm.main import create_app
@@ -43,9 +48,42 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+def _fresh_server_database(admin_url: str) -> Iterator[str]:
+    """A throwaway database on the server behind ``admin_url``, dropped after.
+
+    ``DROP DATABASE ... WITH (FORCE)`` (PostgreSQL 13 or newer) terminates
+    any connection a test may have left pooled, so teardown never fails on
+    a lingering session.
+    """
+    database_name = f"cfm_test_{uuid4().hex}"
+    admin_engine = create_engine(admin_url, isolation_level="AUTOCOMMIT", poolclass=NullPool)
+    try:
+        with admin_engine.connect() as connection:
+            connection.execute(text(f'CREATE DATABASE "{database_name}"'))
+        try:
+            yield admin_engine.url.set(database=database_name).render_as_string(hide_password=False)
+        finally:
+            with admin_engine.connect() as connection:
+                connection.execute(text(f'DROP DATABASE "{database_name}" WITH (FORCE)'))
+    finally:
+        admin_engine.dispose()
+
+
 @pytest.fixture
-def database_url(tmp_path: Path) -> str:
-    return f"sqlite:///{(tmp_path / 'test.db').as_posix()}"
+def database_url(tmp_path: Path) -> Iterator[str]:
+    """The database URL for one test: a fresh SQLite file by default.
+
+    When ``CFM_TEST_DATABASE_URL`` names a PostgreSQL server (the CI
+    PostgreSQL job sets it), every test instead gets its own freshly
+    created database on that server, so isolation stays identical to the
+    per-test SQLite file while the whole suite exercises the dialect the
+    application deploys against.
+    """
+    admin_url = os.environ.get("CFM_TEST_DATABASE_URL")
+    if not admin_url:
+        yield f"sqlite:///{(tmp_path / 'test.db').as_posix()}"
+        return
+    yield from _fresh_server_database(admin_url)
 
 
 @asynccontextmanager
@@ -53,43 +91,50 @@ async def build_app(database_url: str, **settings_overrides: Any) -> AsyncIterat
     """A migrated, seeded application; overrides feed extra Settings fields.
 
     The evidence store defaults to a directory next to the SQLite database
-    file, so no test ever writes evidence into the working directory.
+    file — or to a temporary directory for a server database such as the
+    CI PostgreSQL run — so no test ever writes evidence into the working
+    directory.
     """
-    if "evidence_dir" not in settings_overrides and database_url.startswith("sqlite:///"):
-        database_path = Path(database_url.removeprefix("sqlite:///"))
-        settings_overrides["evidence_dir"] = database_path.parent / "evidence"
-    settings = Settings(
-        database_url=database_url,
-        docs_enabled=False,
-        db_auto_upgrade=True,
-        **settings_overrides,
-    )
-    application = create_app(settings)
-    async with application.router.lifespan_context(application):
-        with application.state.session_factory() as session:
-            for username, display_name, role in TEST_USERS:
-                user = User(
-                    username=username,
-                    display_name=display_name,
-                    role=role,
-                    is_active=True,
-                )
-                session.add(user)
-                session.flush()
-                session.add(
-                    ApiToken(
-                        user_id=user.id,
-                        label="test",
-                        token_hash=hash_token(token_for(username)),
-                        expires_at=None,
-                        revoked=False,
+    with ExitStack() as stack:
+        if "evidence_dir" not in settings_overrides:
+            if database_url.startswith("sqlite:///"):
+                database_path = Path(database_url.removeprefix("sqlite:///"))
+                settings_overrides["evidence_dir"] = database_path.parent / "evidence"
+            else:
+                temporary_dir = stack.enter_context(TemporaryDirectory(prefix="cfm-test-evidence-"))
+                settings_overrides["evidence_dir"] = Path(temporary_dir)
+        settings = Settings(
+            database_url=database_url,
+            docs_enabled=False,
+            db_auto_upgrade=True,
+            **settings_overrides,
+        )
+        application = create_app(settings)
+        async with application.router.lifespan_context(application):
+            with application.state.session_factory() as session:
+                for username, display_name, role in TEST_USERS:
+                    user = User(
+                        username=username,
+                        display_name=display_name,
+                        role=role,
+                        is_active=True,
                     )
-                )
-                # The installation-wide grant every user held before site
-                # scoping existed; scoped users are created per test.
-                session.add(SiteGrant(user_id=user.id, site_id=None))
-            session.commit()
-        yield application
+                    session.add(user)
+                    session.flush()
+                    session.add(
+                        ApiToken(
+                            user_id=user.id,
+                            label="test",
+                            token_hash=hash_token(token_for(username)),
+                            expires_at=None,
+                            revoked=False,
+                        )
+                    )
+                    # The installation-wide grant every user held before site
+                    # scoping existed; scoped users are created per test.
+                    session.add(SiteGrant(user_id=user.id, site_id=None))
+                session.commit()
+            yield application
 
 
 @pytest.fixture
