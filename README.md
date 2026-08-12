@@ -175,6 +175,11 @@ mypy
 python -m pytest
 ```
 
+CI additionally gates test coverage and runs the migration chain and the
+full suite against a real PostgreSQL server (set `CFM_TEST_DATABASE_URL`
+to a PostgreSQL URL to do the same locally); day-to-day local runs stay
+on SQLite for speed.
+
 ## Configuration
 
 Settings use the `CFM_` prefix (see `.env.example`):

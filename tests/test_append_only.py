@@ -17,9 +17,12 @@ migration that recreates one of these tables (SQLite batch mode drops and
 rebuilds the table, silently discarding its triggers) fails CI until it
 recreates the triggers too.
 
-Only the SQLite trigger DDL runs here, because CI has no PostgreSQL
-container; the PostgreSQL branch of migration ``0004`` is deliberately
-trivial and reviewed by inspection.
+These tests follow the session's database: SQLite by default, and the
+PostgreSQL server in CI's PostgreSQL job, where they are what proves the
+plpgsql trigger actually fires rather than merely that its DDL executed.
+The trigger names and the exception class differ between the dialects;
+the message an operator would read does not, and neither does the
+invariant.
 """
 
 from __future__ import annotations
@@ -30,7 +33,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from sqlalchemy import Engine, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DatabaseError
 from sqlalchemy.orm import Session
 
 from cfm.database import build_engine
@@ -56,8 +59,7 @@ PROTECTED_TABLES: tuple[str, ...] = (
 )
 
 
-def _migrated_engine(tmp_path: Path) -> Engine:
-    url = f"sqlite:///{(tmp_path / 'append-only.db').as_posix()}"
+def _migrated_engine(url: str) -> Engine:
     upgrade_to_head(url)
     return build_engine(url)
 
@@ -119,11 +121,30 @@ def _seed_one_row_per_protected_table(engine: Engine) -> None:
 
 
 def _trigger_names(engine: Engine) -> set[str]:
+    """Every trigger the connected database carries, whichever dialect it is."""
+    query = (
+        "SELECT tgname FROM pg_trigger WHERE NOT tgisinternal"
+        if engine.dialect.name == "postgresql"
+        else "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+    )
     with engine.connect() as connection:
-        rows = connection.execute(
-            text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
-        ).scalars()
-        return set(rows)
+        return set(connection.execute(text(query)).scalars())
+
+
+def _expected_trigger_names(engine: Engine) -> set[str]:
+    """The trigger names migration 0004 creates on this dialect.
+
+    PostgreSQL gets one statement-level trigger per table covering all
+    three operations; SQLite needs one row-level trigger per operation
+    because it has no statement-level triggers and no TRUNCATE.
+    """
+    if engine.dialect.name == "postgresql":
+        return {f"trg_{table}_append_only" for table in PROTECTED_TABLES}
+    return {
+        f"trg_{table}_no_{operation}"
+        for table in PROTECTED_TABLES
+        for operation in ("update", "delete")
+    }
 
 
 def test_the_models_constant_matches_the_protected_tables() -> None:
@@ -132,16 +153,31 @@ def test_the_models_constant_matches_the_protected_tables() -> None:
 
 
 @pytest.mark.parametrize("table", PROTECTED_TABLES)
-def test_direct_update_is_blocked(tmp_path: Path, table: str) -> None:
-    """A raw UPDATE against a protected table aborts with the trigger message."""
-    engine = _migrated_engine(tmp_path)
+@pytest.mark.parametrize("operation", ("UPDATE", "DELETE"))
+def test_a_direct_mutation_is_blocked(database_url: str, table: str, operation: str) -> None:
+    """A raw UPDATE or DELETE aborts with the trigger's message, row intact.
+
+    This runs on whichever database the session is configured for, so the
+    PostgreSQL job asserts the plpgsql trigger actually fires rather than
+    merely that its DDL executed. Both dialects raise the same message —
+    SQLite through ``RAISE(ABORT)``, PostgreSQL through ``RAISE EXCEPTION``
+    — under different SQLAlchemy exception classes, so the assertion is on
+    their common base and on the text the operator would read.
+    """
+    # Table names come from this file's own constant, never from input.
+    statement = (
+        f"UPDATE {table} SET id = id"  # noqa: S608
+        if operation == "UPDATE"
+        else f"DELETE FROM {table}"  # noqa: S608
+    )
+    engine = _migrated_engine(database_url)
     try:
         _seed_one_row_per_protected_table(engine)
         with (
             engine.begin() as connection,
-            pytest.raises(IntegrityError, match=f"{table} is append-only"),
+            pytest.raises(DatabaseError, match=f"{table} is append-only"),
         ):
-            connection.execute(text(f"UPDATE {table} SET id = id"))  # noqa: S608
+            connection.execute(text(statement))
         with engine.connect() as connection:
             count = connection.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar()  # noqa: S608
         assert count == 1
@@ -149,25 +185,7 @@ def test_direct_update_is_blocked(tmp_path: Path, table: str) -> None:
         engine.dispose()
 
 
-@pytest.mark.parametrize("table", PROTECTED_TABLES)
-def test_direct_delete_is_blocked(tmp_path: Path, table: str) -> None:
-    """A raw DELETE against a protected table aborts and the row survives."""
-    engine = _migrated_engine(tmp_path)
-    try:
-        _seed_one_row_per_protected_table(engine)
-        with (
-            engine.begin() as connection,
-            pytest.raises(IntegrityError, match=f"{table} is append-only"),
-        ):
-            connection.execute(text(f"DELETE FROM {table}"))  # noqa: S608
-        with engine.connect() as connection:
-            count = connection.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar()  # noqa: S608
-        assert count == 1
-    finally:
-        engine.dispose()
-
-
-def test_triggers_exist_after_upgrade_head(tmp_path: Path) -> None:
+def test_triggers_exist_after_upgrade_head(database_url: str) -> None:
     """Every protected table carries its UPDATE and DELETE trigger at head.
 
     This presence check is what keeps the autogenerate drift test honest:
@@ -175,21 +193,20 @@ def test_triggers_exist_after_upgrade_head(tmp_path: Path) -> None:
     including a batch table rebuild that discards them as a side effect —
     would pass every schema comparison and fail only here.
     """
-    engine = _migrated_engine(tmp_path)
+    engine = _migrated_engine(database_url)
     try:
-        names = _trigger_names(engine)
+        assert _expected_trigger_names(engine) <= _trigger_names(engine)
     finally:
         engine.dispose()
-    expected = {
-        f"trg_{table}_no_{operation}"
-        for table in PROTECTED_TABLES
-        for operation in ("update", "delete")
-    }
-    assert expected <= names
 
 
 def test_downgrade_removes_the_triggers_and_the_enforcement(tmp_path: Path) -> None:
-    """Downgrading below 0004 returns the tables to convention-only."""
+    """Downgrading below 0004 returns the tables to convention-only.
+
+    This one builds its own SQLite URL: it asserts on raw literals a
+    PostgreSQL server would type differently, and the downgrade path's
+    PostgreSQL branch is covered by the migration chain CI runs there.
+    """
     url = f"sqlite:///{(tmp_path / 'downgrade.db').as_posix()}"
     upgrade_to_head(url)
     command.downgrade(build_alembic_config(url), "0003")
