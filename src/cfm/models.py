@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, Final
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -453,3 +453,23 @@ class AuditEntry(Base):
     scope: Mapped[str | None] = mapped_column(String(64), nullable=True)
     before: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     after: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+
+APPEND_ONLY_TABLES: Final[tuple[str, ...]] = (
+    AuditEntry.__tablename__,
+    CommissioningEvidence.__tablename__,
+    EvidenceAttachment.__tablename__,
+    EvidenceObject.__tablename__,
+)
+"""Tables whose rows are only ever inserted, enforced at the database layer.
+
+Migration ``0004`` installs ``BEFORE UPDATE`` / ``BEFORE DELETE`` triggers
+(plus ``TRUNCATE`` on PostgreSQL) on each of these tables, so history
+cannot be rewritten by an application bug, a migration mistake, or a
+direct connection — whatever role it uses. Triggers are not part of this
+metadata, which keeps the autogenerate drift check blind to them; the
+dedicated tests in ``tests/test_append_only.py`` assert their presence
+and firing instead. Removing rows from one of these tables requires a
+deliberate migration that drops the trigger, deletes, and recreates it —
+that friction is the point.
+"""
