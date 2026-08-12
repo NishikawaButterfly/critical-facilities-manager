@@ -213,8 +213,8 @@ class CommissioningTest(Base):
     Recording a result stores the executor (the request actor) and a witness
     that must be a different actor. ``punch_item_id`` links the punch item
     opened from a failed test, when there is one. Evidence entries are
-    structured text notes only; file and photo evidence is future work
-    pending object storage.
+    structured text notes; file evidence attaches through
+    :class:`EvidenceAttachment`.
     """
 
     __tablename__ = "commissioning_tests"

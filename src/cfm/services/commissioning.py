@@ -1,8 +1,8 @@
 """Commissioning test services.
 
-Evidence is structured text only: each entry records a note, the acting
-actor, and a UTC timestamp. File and photo evidence is future work pending
-object storage.
+Evidence notes are structured text: each entry records a note, the acting
+actor, and a UTC timestamp. File evidence attaches through
+:mod:`cfm.services.evidence` onto the same tests.
 """
 
 from __future__ import annotations
