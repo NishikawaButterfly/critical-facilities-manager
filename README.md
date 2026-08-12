@@ -109,7 +109,10 @@ development and interfaces may change without notice.
   create, update, delete, and state transition: who (the authenticated
   username), what (entity and action), when (UTC), and a before/after
   summary of the changed fields. Token secrets and hashes never appear in
-  it. The API only ever reads this table.
+  it. The API only ever reads this table, and the database itself refuses
+  to change it: append-only is enforced by triggers on the audit and
+  evidence tables, not just by application convention (see
+  [Database migrations](#database-migrations)).
 - **Problem-details errors** — every error body follows the RFC 9457 shape
   (see [Problem details](#problem-details)).
 - **OpenAPI docs** — interactive documentation at `/docs` when enabled.
@@ -139,10 +142,12 @@ development and interfaces may change without notice.
   backend can replace it without touching callers; that backend is future
   work, deliberately not built yet.
 - Evidence retention and deletion. There is no delete endpoint — evidence
-  is append-only like the audit trail — and how a real deployment handles
-  retention periods, legal holds, or data-protection erasure requests is
-  an open decision documented in
-  [Evidence storage](#evidence-storage), not silently ignored.
+  is append-only like the audit trail, and the database enforces that with
+  triggers — so how a real deployment handles retention periods, legal
+  holds, or data-protection erasure requests is an open decision
+  documented in [Evidence storage](#evidence-storage), not silently
+  ignored. Until that design exists, any operational deletion takes a
+  deliberate migration, on purpose.
 - A frontend.
 
 ## Local development
@@ -267,15 +272,24 @@ since the content type is a client declaration. Downloads are reads and
 stay installation-wide, like every other read in the API.
 
 There is no delete endpoint: evidence rows and objects are append-only,
-like the audit trail whose entries reference them. Honest scope, twice
-over. First, storage is a local directory — right for the single-process
-deployment story, and the store's small interface (write / verified read)
-is the seam where an S3-compatible remote backend arrives later. Second,
-retention is an open decision for a real deployment: retention periods,
-legal holds, and data-protection erasure requests will eventually require
-a deliberate deletion mechanism with its own audit story, and that design
-is documented future work rather than something this codebase pretends
-cannot happen.
+like the audit trail whose entries reference them — and since migration
+`0004` the database enforces that itself, with triggers that abort any
+UPDATE or DELETE against the audit and evidence tables whatever
+connection attempts it. Honest scope, twice over. First, storage is a
+local directory — right for the single-process deployment story, and the
+store's small interface (write / verified read) is the seam where an
+S3-compatible remote backend arrives later; the triggers guard the
+database rows, not the object files, whose write-once discipline the
+store enforces on its own. Second, retention is an open decision for a
+real deployment: retention periods, legal holds, and data-protection
+erasure requests will eventually require a deliberate deletion mechanism
+with its own audit story, and that design is documented future work
+rather than something this codebase pretends cannot happen. The triggers
+raise the cost of that future mechanism on purpose: operational deletion
+now requires a deliberate migration that drops the trigger, deletes, and
+recreates it — a visible, reviewable act in the migration history instead
+of a quiet `DELETE` someone runs against the database. That friction is
+the point.
 
 ## Database migrations
 
@@ -308,6 +322,21 @@ commands target whatever database the application would serve.
 The test suite enforces that a freshly migrated database matches the
 models exactly and that autogenerate detects no drift at head, so a model
 change without a matching migration fails CI.
+
+One deliberate exception lives outside that comparison: migration `0004`
+installs `BEFORE UPDATE` / `BEFORE DELETE` triggers (plus `TRUNCATE` on
+PostgreSQL) on the append-only tables — `audit_entries`,
+`commissioning_evidence`, `evidence_attachments`, `evidence_objects` — so
+history cannot be rewritten by an application bug or a direct connection,
+whatever role it uses. A PostgreSQL superuser, or a later migration, can
+still drop a trigger; the protection is against silent mutation, not
+against deliberate schema changes, which stay visible in the migration
+history. Triggers are not part of the SQLAlchemy metadata, so the drift
+checks above are blind to them by construction; dedicated tests assert
+instead that the triggers exist at head and abort direct UPDATE and
+DELETE statements on every protected table, which also catches a future
+migration rebuilding one of these tables (SQLite batch mode discards
+triggers with the old table) without recreating them.
 
 ## Demo dataset
 
