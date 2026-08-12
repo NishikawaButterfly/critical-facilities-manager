@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Critical Facilities Manager</title>
+    <link rel="stylesheet" href="./app.css" />
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+
+    <header class="app-header">
+      <div class="app-header__title">
+        <h1 id="app-name">Critical Facilities Manager</h1>
+        <p id="app-version" class="muted"></p>
+      </div>
+
+      <form id="token-form" class="token" novalidate>
+        <div class="token__field">
+          <label for="token-input">API token</label>
+          <input
+            id="token-input"
+            name="token"
+            type="password"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            aria-describedby="token-help"
+          />
+        </div>
+        <div class="token__buttons">
+          <button type="submit">Use token</button>
+          <button type="button" id="token-forget">Forget token</button>
+        </div>
+        <p id="token-help" class="muted"></p>
+      </form>
+
+      <p id="identity" class="identity" role="status"></p>
+    </header>
+
+    <nav class="tabs" aria-label="Views">
+      <ul>
+        <li><a href="#/tree" data-view="tree">Asset tree</a></li>
+        <li><a href="#/board" data-view="board">Order board</a></li>
+        <li><a href="#/audit" data-view="audit">Audit timeline</a></li>
+      </ul>
+    </nav>
+
+    <div id="banner" class="banner" role="alert" hidden></div>
+
+    <main id="main" tabindex="-1">
+      <section id="view-tree" class="view" aria-labelledby="view-tree-heading" hidden>
+        <h2 id="view-tree-heading">Asset tree</h2>
+        <p class="muted">
+          Locations as the API stores them &mdash; site, building, floor, room &mdash; with the
+          assets recorded against each one. Assets may hang from any level of the hierarchy.
+        </p>
+        <div class="tree-layout">
+          <div id="tree-root" class="tree-root" aria-busy="false"></div>
+          <div
+            id="asset-detail"
+            class="asset-detail"
+            role="region"
+            aria-live="polite"
+            aria-label="Selected asset"
+          ></div>
+        </div>
+      </section>
+
+      <section id="view-board" class="view" aria-labelledby="view-board-heading" hidden>
+        <h2 id="view-board-heading">Order board</h2>
+        <p class="muted">
+          Maintenance orders grouped by the workflow status the API reports. Only the transitions
+          the order&rsquo;s current status allows are offered, and only when the token&rsquo;s role
+          may write; the server remains the authority and its refusals are shown verbatim.
+        </p>
+        <div id="board-root" class="board-root" aria-busy="false"></div>
+      </section>
+
+      <section id="view-audit" class="view" aria-labelledby="view-audit-heading" hidden>
+        <h2 id="view-audit-heading">Audit timeline</h2>
+        <p class="muted">
+          The audit trail, newest first. It is append-only: the API only ever reads this table and
+          the database refuses to update or delete its rows, so nothing shown here can be edited or
+          removed after the fact.
+        </p>
+        <div id="audit-root" class="audit-root" aria-busy="false"></div>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <p class="muted">
+        There is no login flow: the API authenticates bearer tokens only. The token entered above
+        is kept in this browser and sent as <code>Authorization: Bearer &lt;token&gt;</code>;
+        &ldquo;Forget token&rdquo; removes it. Every figure on these pages comes from the API as it
+        answered &mdash; nothing is filled in by the page itself.
+      </p>
+    </footer>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

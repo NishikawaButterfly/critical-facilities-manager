@@ -1,0 +1,572 @@
+/* Critical Facilities Manager web frontend.
+ *
+ * One stylesheet, no framework, no build step. Layout is flow and grid only,
+ * so it degrades to a single readable column at 375px without media-query
+ * gymnastics; the two multi-column areas (the tree and the board) collapse
+ * with `auto-fit` rather than at hand-picked breakpoints.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --surface-sunken: #eef0f4;
+  --border: #d3d7de;
+  --text: #1b1f24;
+  --text-muted: #5b6472;
+  --accent: #1f4f82;
+  --accent-contrast: #ffffff;
+  --danger: #8a1c1c;
+  --danger-bg: #fdf0f0;
+  --warning: #6b4a05;
+  --warning-bg: #fdf6e3;
+  --ok: #1c5c34;
+  --ok-bg: #eff7f1;
+
+  --radius: 6px;
+  --gap: 1rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c;
+    --surface: #1c2027;
+    --surface-sunken: #22272f;
+    --border: #39404b;
+    --text: #e7eaee;
+    --text-muted: #a3acb9;
+    --accent: #7fb0e6;
+    --accent-contrast: #10151b;
+    --danger: #f2a3a3;
+    --danger-bg: #341c1c;
+    --warning: #e8c778;
+    --warning-bg: #322a15;
+    --ok: #8fd4a8;
+    --ok-bg: #16291d;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0 1rem 3rem;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+h1 {
+  font-size: 1.25rem;
+  margin: 0;
+}
+
+h2 {
+  font-size: 1.1rem;
+  margin: 1.5rem 0 0.25rem;
+}
+
+h3 {
+  font-size: 0.95rem;
+  margin: 0 0 0.5rem;
+}
+
+p {
+  margin: 0.5rem 0;
+}
+
+code,
+.raw,
+pre {
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  font-size: 0.85em;
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Focus is never removed, only made obvious. */
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  padding: 0.5rem 0.75rem;
+  z-index: 10;
+}
+
+.skip-link:focus {
+  left: 0;
+}
+
+button {
+  font: inherit;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  /* 375px-safe: never shrink a control below a comfortable tap target. */
+  min-height: 2.25rem;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+button.primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border-color: var(--accent);
+}
+
+input,
+textarea {
+  font: inherit;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  width: 100%;
+  max-width: 100%;
+}
+
+label {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+/* ---------- header, token entry, tabs ---------- */
+
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap);
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 1rem 0 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-header__title {
+  min-width: 0;
+}
+
+.token {
+  display: grid;
+  gap: 0.4rem;
+  /* Grows with the header but never forces a horizontal scrollbar at 375px. */
+  flex: 1 1 18rem;
+  max-width: 30rem;
+}
+
+.token__field {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.token__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.identity {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.tabs ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+.tabs a {
+  display: inline-block;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  text-decoration: none;
+  min-height: 2.25rem;
+}
+
+.tabs a:hover {
+  border-color: var(--accent);
+}
+
+.tabs a[aria-current="page"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+/* ---------- banners and inline messages ---------- */
+
+.banner,
+.message {
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  padding: 0.6rem 0.75rem;
+  margin: 0.75rem 0;
+  background: var(--surface);
+}
+
+.banner[hidden] {
+  display: none;
+}
+
+.message__heading {
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+}
+
+.message__detail {
+  margin: 0;
+  /* Problem details are full sentences and may be long; keep them readable
+     and let long identifiers wrap instead of widening the page. */
+  overflow-wrap: anywhere;
+}
+
+.message__code {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--text-muted);
+}
+
+.level-error {
+  border-left-color: var(--danger);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.level-warning {
+  border-left-color: var(--warning);
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.level-ok {
+  border-left-color: var(--ok);
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.level-info {
+  border-left-color: var(--accent);
+}
+
+.empty {
+  color: var(--text-muted);
+  font-style: italic;
+  margin: 0.5rem 0;
+}
+
+/* ---------- badges ---------- */
+
+.badge {
+  display: inline-block;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.badge--critical,
+.badge--blocking {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.badge--high,
+.badge--major {
+  border-color: var(--warning);
+  color: var(--warning);
+  background: var(--warning-bg);
+}
+
+/* ---------- asset tree ---------- */
+
+.tree-layout {
+  display: grid;
+  gap: var(--gap);
+  /* Two columns when there is room for both, one column at 375px. */
+  grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr));
+  align-items: start;
+}
+
+.tree-root ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 1rem;
+  border-left: 1px solid var(--border);
+}
+
+.tree-root > ul {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.tree-root li {
+  margin: 0.15rem 0;
+}
+
+.tree-root details > summary {
+  cursor: pointer;
+  padding: 0.25rem 0.2rem;
+  border-radius: var(--radius);
+}
+
+.tree-root details > summary:hover {
+  background: var(--surface-sunken);
+}
+
+.node-name {
+  font-weight: 600;
+}
+
+.asset-button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border-color: transparent;
+  padding: 0.25rem 0.4rem;
+}
+
+.asset-button:hover {
+  background: var(--surface-sunken);
+  border-color: var(--border);
+}
+
+.asset-button[aria-pressed="true"] {
+  background: var(--surface-sunken);
+  border-color: var(--accent);
+}
+
+.asset-detail {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  position: sticky;
+  top: 0.5rem;
+}
+
+.field-list {
+  display: grid;
+  grid-template-columns: minmax(6rem, auto) 1fr;
+  gap: 0.3rem 0.75rem;
+  margin: 0;
+}
+
+.field-list dt {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.field-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- order board ---------- */
+
+.board-root {
+  display: grid;
+  gap: var(--gap);
+  /* Columns side by side on a desk, stacked on a phone. */
+  grid-template-columns: repeat(auto-fit, minmax(min(17rem, 100%), 1fr));
+  align-items: start;
+  margin-top: var(--gap);
+}
+
+.column {
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.6rem;
+}
+
+.column__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin: 0 0 0.5rem;
+}
+
+.column__count {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 0.85rem;
+}
+
+.column ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.6rem;
+}
+
+.card__title {
+  font-weight: 600;
+  margin: 0 0 0.25rem;
+}
+
+.card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0.25rem 0;
+}
+
+.card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.action-form {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--border);
+}
+
+.action-form__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+/* ---------- audit timeline ---------- */
+
+.timeline {
+  list-style: none;
+  margin: var(--gap) 0 0;
+  padding: 0 0 0 1rem;
+  border-left: 2px solid var(--border);
+  display: grid;
+  gap: 0.6rem;
+}
+
+.entry {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.6rem;
+  position: relative;
+}
+
+.entry::before {
+  content: "";
+  position: absolute;
+  left: -1.35rem;
+  top: 1rem;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.entry__when {
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.entry__headline {
+  margin: 0.15rem 0;
+  overflow-wrap: anywhere;
+}
+
+.entry__actor {
+  font-weight: 600;
+}
+
+.entry details {
+  margin-top: 0.35rem;
+}
+
+.entry summary {
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.entry pre {
+  margin: 0.35rem 0 0;
+  padding: 0.5rem;
+  background: var(--surface-sunken);
+  border-radius: var(--radius);
+  /* Wide JSON scrolls inside its own box; the page never scrolls sideways. */
+  overflow-x: auto;
+}
+
+.timeline-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: var(--gap);
+}
+
+.app-footer {
+  margin-top: 2rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}

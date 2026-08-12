@@ -16,6 +16,7 @@ from .evidence import EvidenceStore
 from .migrate import ensure_schema_current, upgrade_to_head
 from .problems import register_problem_handlers
 from .ratelimit import AuthRateLimiter
+from .web import mount_web
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -76,6 +77,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     register_problem_handlers(application)
     application.include_router(router, prefix=runtime_settings.api_prefix)
+    if runtime_settings.web_enabled:
+        # Added last, so every API route is matched before the frontend's
+        # mount is reached and the API's own 404 and 405 responses stand.
+        mount_web(application, runtime_settings)
     return application
 
 
