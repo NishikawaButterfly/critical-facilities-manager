@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .errors import DomainError, RateLimitedError
+from .errors import DomainError, RateLimitedError, RequestBodyTooLargeError
 
 PROBLEM_TYPE = "https://github.com/NishikawaButterfly/critical-facilities-manager#problem-details"
 PROBLEM_MEDIA_TYPE = "application/problem+json"
@@ -95,7 +95,22 @@ async def _handle_http_exception(request: Request, exc: Exception) -> JSONRespon
     )
 
 
+async def _handle_request_too_large(request: Request, exc: Exception) -> JSONResponse:
+    if not isinstance(exc, RequestBodyTooLargeError):  # pragma: no cover
+        raise exc
+    return problem_response(
+        request,
+        status=exc.status_code,
+        title=exc.title,
+        detail=str(exc.detail),
+        error_code=exc.error_code,
+    )
+
+
 def register_problem_handlers(app: FastAPI) -> None:
     app.add_exception_handler(DomainError, _handle_domain_error)
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
+    # Registered on the specific class so the oversized-upload abort keeps
+    # its own error code instead of the generic HTTP one.
+    app.add_exception_handler(RequestBodyTooLargeError, _handle_request_too_large)
     app.add_exception_handler(StarletteHTTPException, _handle_http_exception)

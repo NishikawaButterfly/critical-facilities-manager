@@ -50,7 +50,14 @@ def database_url(tmp_path: Path) -> str:
 
 @asynccontextmanager
 async def build_app(database_url: str, **settings_overrides: Any) -> AsyncIterator[FastAPI]:
-    """A migrated, seeded application; overrides feed extra Settings fields."""
+    """A migrated, seeded application; overrides feed extra Settings fields.
+
+    The evidence store defaults to a directory next to the SQLite database
+    file, so no test ever writes evidence into the working directory.
+    """
+    if "evidence_dir" not in settings_overrides and database_url.startswith("sqlite:///"):
+        database_path = Path(database_url.removeprefix("sqlite:///"))
+        settings_overrides["evidence_dir"] = database_path.parent / "evidence"
     settings = Settings(
         database_url=database_url,
         docs_enabled=False,
@@ -107,6 +114,31 @@ async def anon_client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
         yield test_client
+
+
+async def create_scoped_user(
+    client: AsyncClient,
+    username: str,
+    *,
+    role: str = "engineer",
+    site_ids: list[str] | None = None,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Create a user (optionally site-scoped), mint a token, return (user, headers)."""
+    body: dict[str, Any] = {
+        "username": username,
+        "display_name": username.replace("-", " ").title(),
+        "role": role,
+    }
+    if site_ids is not None:
+        body["site_ids"] = site_ids
+    created = await client.post("/api/v1/users", json=body, headers=ADMIN)
+    assert created.status_code == 201, created.text
+    user: dict[str, Any] = created.json()
+    minted = await client.post(
+        f"/api/v1/users/{user['id']}/tokens", json={"label": "test"}, headers=ADMIN
+    )
+    assert minted.status_code == 201, minted.text
+    return user, {"Authorization": f"Bearer {minted.json()['token']}"}
 
 
 async def create_location(

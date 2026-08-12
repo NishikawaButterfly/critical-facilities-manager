@@ -28,6 +28,7 @@ from ..config import Settings
 from ..database import get_session
 from ..domain import UserRole
 from ..errors import AuthenticationError, PermissionDeniedError, RateLimitedError
+from ..evidence import EvidenceStore
 from ..models import User
 from ..ratelimit import AuthRateLimiter, client_source
 from ..services.tokens import resolve_token
@@ -108,6 +109,24 @@ def get_site_access(session: SessionDep, user: CurrentUserDep) -> SiteAccess:
 
 
 SiteAccessDep = Annotated[SiteAccess, Depends(get_site_access)]
+
+
+def get_evidence_store(request: Request) -> EvidenceStore:
+    """The application's content-addressed evidence store."""
+    store: EvidenceStore = request.app.state.evidence_store
+    return store
+
+
+EvidenceStoreDep = Annotated[EvidenceStore, Depends(get_evidence_store)]
+
+
+def get_app_settings(request: Request) -> Settings:
+    """The settings the application was created with."""
+    settings: Settings = request.app.state.settings
+    return settings
+
+
+SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 
 
 @dataclass(frozen=True)

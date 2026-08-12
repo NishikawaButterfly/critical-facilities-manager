@@ -422,6 +422,32 @@ class CommissioningTestResponse(BaseModel):
     updated_at: datetime
 
 
+class EvidenceObjectResponse(BaseModel):
+    id: str
+    sha256: str = Field(
+        description="SHA-256 of the stored content, computed server-side during upload."
+    )
+    size_bytes: int
+    filename: str = Field(
+        description="Filename declared when this content first entered the store."
+    )
+    content_type: str
+    uploaded_by: str
+    created_at: datetime
+
+
+class EvidenceAttachmentResponse(BaseModel):
+    id: int
+    evidence_object: EvidenceObjectResponse
+    commissioning_test_id: str | None
+    punch_item_id: str | None
+    order_id: str | None
+    permit_id: str | None
+    note: str | None
+    attached_by: str
+    attached_at: datetime
+
+
 class ConstraintCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

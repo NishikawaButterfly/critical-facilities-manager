@@ -15,6 +15,7 @@ from .audit import router as audit_router
 from .commissioning import router as commissioning_router
 from .constraints import router as constraints_router
 from .deps import get_current_user, require_admin, require_domain_access
+from .evidence import router as evidence_router
 from .incidents import router as incidents_router
 from .locations import router as locations_router
 from .maintenance import router as maintenance_router
@@ -42,6 +43,7 @@ domain_router.include_router(incidents_router)
 domain_router.include_router(commissioning_router)
 domain_router.include_router(punch_items_router)
 domain_router.include_router(constraints_router)
+domain_router.include_router(evidence_router)
 domain_router.include_router(audit_router)
 router.include_router(domain_router)
 

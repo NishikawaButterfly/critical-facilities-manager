@@ -80,10 +80,10 @@ development and interfaces may change without notice.
   (both terminal). Recording a result stores the executing user and a
   witness that must be a different, active user. Evidence is a list of structured
   text notes (note, actor, UTC timestamp) appended while the test is pending
-  or together with the result; file and photo evidence is future work
-  pending object storage. A failed test offers a POST action that opens a
-  pre-filled punch item (once per test), audit-linked in both directions the
-  same way incidents link their corrective orders.
+  or together with the result, plus file evidence (see
+  [Evidence storage](#evidence-storage)). A failed test offers a POST action
+  that opens a pre-filled punch item (once per test), audit-linked in both
+  directions the same way incidents link their corrective orders.
 - **Punch items** — a defect, missing element, documentation gap, or safety
   finding (`defect | missing | documentation | safety`) scoped to exactly
   one of an asset or a location, with a severity
@@ -99,6 +99,12 @@ development and interfaces may change without notice.
   a 409 problem naming the constraint and the conflicting order. The
   `advisory` kind is free text attached to assets and is only surfaced,
   never enforced.
+- **File evidence with content hashes** — files (photos, scans, signed
+  sheets, reports) upload directly onto the commissioning test, punch item,
+  maintenance order, or work permit they evidence. The content is hashed
+  server-side while it streams in, stored write-once under its SHA-256, and
+  re-verified on every download, so an audit can prove what was attached
+  and that it has not changed (see [Evidence storage](#evidence-storage)).
 - **Audit trail** — an append-only entry is written automatically for every
   create, update, delete, and state transition: who (the authenticated
   username), what (entity and action), when (UTC), and a before/after
@@ -128,8 +134,15 @@ development and interfaces may change without notice.
   limit (see [Authentication rate limiting](#authentication-rate-limiting)).
   A shared store — or limits at the reverse proxy — is future work for
   multi-worker deployments.
-- File and photo evidence on commissioning tests. Evidence is limited to
-  structured text notes until object storage lands.
+- Remote object storage. Evidence lives in a local directory behind a
+  small store interface (write / verified read) so an S3-compatible
+  backend can replace it without touching callers; that backend is future
+  work, deliberately not built yet.
+- Evidence retention and deletion. There is no delete endpoint — evidence
+  is append-only like the audit trail — and how a real deployment handles
+  retention periods, legal holds, or data-protection erasure requests is
+  an open decision documented in
+  [Evidence storage](#evidence-storage), not silently ignored.
 - A frontend.
 
 ## Local development
@@ -171,6 +184,8 @@ Settings use the `CFM_` prefix (see `.env.example`):
 | `CFM_AUTH_FAILURE_WINDOW_SECONDS` | `60` | Sliding window within which failures accumulate |
 | `CFM_AUTH_LOCKOUT_SECONDS` | `300` | How long a locked source keeps receiving 429 |
 | `CFM_TRUSTED_PROXY` | `false` | Attribute failures to the final `X-Forwarded-For` entry appended by one trusted reverse proxy |
+| `CFM_EVIDENCE_DIR` | `./evidence` | Root directory of the content-addressed evidence store |
+| `CFM_EVIDENCE_MAX_MB` | `25` | Upper bound, in mebibytes, on one uploaded evidence file |
 
 For PostgreSQL, use a URL such as `postgresql+psycopg://cfm:cfm@db:5432/cfm`.
 
@@ -212,6 +227,55 @@ second. What it cannot defend against: offline attacks (only SHA-256
 hashes of the 256-bit secrets are stored, so there is nothing usable to
 steal in the first place) and attacks spread across many sources, which
 per-source accounting inherently only limits per source.
+
+## Evidence storage
+
+Evidence files live in a content-addressed object store under
+`CFM_EVIDENCE_DIR`: an object's path is the SHA-256 of its content beneath
+two levels of prefix directories (`objects/ab/cd/abcd…`). The hash is
+computed server-side while the upload streams in — the filename and content
+type a client declares are recorded as declarations, but the hash and size
+are measured, and they are what an audit can rely on. Content addressing
+makes the store write-once and deduplicating: identical bytes land on the
+same path exactly once, however many objects they evidence, and a stored
+hash is never rewritten. Uploads are flushed and fsynced before the
+database row referencing them commits, so a committed attachment never
+points at bytes that could still be lost; a crash between the two steps
+leaves at most an orphaned object that a retried upload reuses.
+
+Uploading is always an attach: the file arrives as `multipart/form-data`
+(field `file`, optional `note`) on the commissioning test, punch item,
+maintenance order, or work permit it evidences, is allowed only while that
+target can still change state, and is guarded by the same site-scope rules
+as any other write on the target. The attach is the auditable act — its
+audit entry records the actor, the scope, the SHA-256, the measured size,
+and the declaration made in that request. One evidence object may be
+attached to many targets (the bytes are stored once) but only once to any
+single target. Uploads are capped at `CFM_EVIDENCE_MAX_MB`; oversized
+files are rejected with `413` (`evidence.file_too_large`), and request
+bodies beyond the cap plus multipart framing are rejected before parsing
+can spool them to disk (`evidence.request_too_large`).
+
+Downloads re-hash the stored bytes and compare against the recorded
+SHA-256 before serving — verification happens up front, at the price of
+buffering at most one capped file in memory, because a stream can only
+detect corruption after wrong bytes have already been sent with a success
+status. A corrupted or missing object answers `500`
+(`evidence.corrupted`) instead of serving silently wrong evidence. Content
+is always served as an attachment with `X-Content-Type-Options: nosniff`,
+since the content type is a client declaration. Downloads are reads and
+stay installation-wide, like every other read in the API.
+
+There is no delete endpoint: evidence rows and objects are append-only,
+like the audit trail whose entries reference them. Honest scope, twice
+over. First, storage is a local directory — right for the single-process
+deployment story, and the store's small interface (write / verified read)
+is the seam where an S3-compatible remote backend arrives later. Second,
+retention is an open decision for a real deployment: retention periods,
+legal holds, and data-protection erasure requests will eventually require
+a deliberate deletion mechanism with its own audit story, and that design
+is documented future work rather than something this codebase pretends
+cannot happen.
 
 ## Database migrations
 
@@ -315,6 +379,8 @@ parameters.
 | POST | `/maintenance-orders/{id}/start` | scheduled → in_progress |
 | POST | `/maintenance-orders/{id}/complete` | in_progress → done (notes required) |
 | POST | `/maintenance-orders/{id}/cancel` | any active state → cancelled |
+| POST | `/maintenance-orders/{id}/evidence-files` | Upload and attach a file as evidence (multipart) |
+| GET | `/maintenance-orders/{id}/evidence-files` | List the order's file evidence |
 | POST | `/procedures` | Create a procedure (starts as draft, version 1) |
 | GET | `/procedures` | List procedures (`kind`, `status` filters) |
 | GET | `/procedures/{id}` | Fetch one procedure |
@@ -329,6 +395,8 @@ parameters.
 | POST | `/work-permits/{id}/issue` | requested → issued (distinct issuer) |
 | POST | `/work-permits/{id}/close` | issued → closed (note required) |
 | POST | `/work-permits/{id}/revoke` | issued → revoked |
+| POST | `/work-permits/{id}/evidence-files` | Upload and attach a file as evidence (multipart) |
+| GET | `/work-permits/{id}/evidence-files` | List the permit's file evidence |
 | POST | `/incidents` | Report an incident (starts as open) |
 | GET | `/incidents` | List incidents (`asset_id`, `severity`, `status` filters) |
 | GET | `/incidents/{id}` | Fetch one incident |
@@ -343,15 +411,21 @@ parameters.
 | POST | `/commissioning-tests/{id}/pass` | pending → passed (distinct witness) |
 | POST | `/commissioning-tests/{id}/fail` | pending → failed (distinct witness) |
 | POST | `/commissioning-tests/{id}/punch-item` | Open a linked punch item from a failed test |
+| POST | `/commissioning-tests/{id}/evidence-files` | Upload and attach a file as evidence (multipart) |
+| GET | `/commissioning-tests/{id}/evidence-files` | List the test's file evidence |
 | POST | `/punch-items` | Record a punch item (asset or location scope) |
 | GET | `/punch-items` | List punch items (`asset_id`, `location_id`, `category`, `severity`, `status`, `overdue` filters) |
 | GET | `/punch-items/{id}` | Fetch one punch item |
 | POST | `/punch-items/{id}/start` | open → in_progress |
 | POST | `/punch-items/{id}/close` | in_progress → closed (distinct verifier, note required) |
+| POST | `/punch-items/{id}/evidence-files` | Upload and attach a file as evidence (multipart) |
+| GET | `/punch-items/{id}/evidence-files` | List the punch item's file evidence |
 | POST | `/constraints` | Create a constraint over member assets |
 | GET | `/constraints` | List constraints (`kind`, `status`, `asset_id` filters) |
 | GET | `/constraints/{id}` | Fetch one constraint |
 | POST | `/constraints/{id}/retire` | active → retired |
+| GET | `/evidence-objects/{id}` | Fetch one evidence object's metadata (hash, size, declaration) |
+| GET | `/evidence-objects/{id}/content` | Download the bytes, re-verified against the recorded hash |
 | GET | `/audit-entries` | Read the audit trail (`entity_type`, `entity_id`, `actor` filters) |
 
 ## Problem details

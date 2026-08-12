@@ -213,8 +213,8 @@ class CommissioningTest(Base):
     Recording a result stores the executor (the request actor) and a witness
     that must be a different actor. ``punch_item_id`` links the punch item
     opened from a failed test, when there is one. Evidence entries are
-    structured text notes only; file and photo evidence is future work
-    pending object storage.
+    structured text notes; file evidence attaches through
+    :class:`EvidenceAttachment`.
     """
 
     __tablename__ = "commissioning_tests"
@@ -258,6 +258,76 @@ class CommissioningEvidence(Base):
     note: Mapped[str] = mapped_column(Text)
     actor: Mapped[str] = mapped_column(String(128))
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class EvidenceObject(Base):
+    """One immutable stored file, addressed by the SHA-256 of its content.
+
+    The row is the database's view of an object in the evidence store: the
+    hash, the size counted server-side while the upload streamed in, and
+    the declaration made when the content first entered the store
+    (filename, content type, uploader, time). Content addressing
+    deduplicates — re-uploading identical bytes reuses this row whatever
+    filename the later upload declared; each attachment's audit entry
+    records the declaration made in its own request. Rows are append-only:
+    nothing updates or deletes them, and there is no delete endpoint.
+    """
+
+    __tablename__ = "evidence_objects"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_public_id)
+    sha256: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    filename: Mapped[str] = mapped_column(String(255))
+    content_type: Mapped[str] = mapped_column(String(255))
+    uploaded_by: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class EvidenceAttachment(Base):
+    """One evidence object attached to one domain object — the auditable act.
+
+    Exactly one of the four target references is set; the service enforces
+    it, following the punch-item asset/location pattern. One object may be
+    attached to many targets (the bytes are stored once), but only once to
+    any single target — the per-target unique constraints never collide on
+    rows whose target column is null, because SQL unique constraints treat
+    nulls as distinct. Rows are append-only, like the audit trail.
+    """
+
+    __tablename__ = "evidence_attachments"
+    __table_args__ = (
+        UniqueConstraint(
+            "evidence_object_id", "commissioning_test_id", name="uq_evidence_attachments_test"
+        ),
+        UniqueConstraint(
+            "evidence_object_id", "punch_item_id", name="uq_evidence_attachments_punch_item"
+        ),
+        UniqueConstraint("evidence_object_id", "order_id", name="uq_evidence_attachments_order"),
+        UniqueConstraint("evidence_object_id", "permit_id", name="uq_evidence_attachments_permit"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    evidence_object_id: Mapped[str] = mapped_column(
+        ForeignKey("evidence_objects.id", ondelete="RESTRICT"), index=True
+    )
+    commissioning_test_id: Mapped[str | None] = mapped_column(
+        ForeignKey("commissioning_tests.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    punch_item_id: Mapped[str | None] = mapped_column(
+        ForeignKey("punch_items.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    order_id: Mapped[str | None] = mapped_column(
+        ForeignKey("maintenance_orders.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    permit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("work_permits.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attached_by: Mapped[str] = mapped_column(String(128))
+    attached_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    evidence_object: Mapped[EvidenceObject] = relationship()
 
 
 class Constraint(Base):
