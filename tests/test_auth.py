@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from cfm.models import ApiToken, User
+from cfm.ratelimit import AuthRateLimiter
 from cfm.services.tokens import hash_token
 
-from .conftest import ACTOR, ADMIN, VIEWER, create_hierarchy
+from .conftest import ACTOR, ADMIN, VIEWER, build_app, create_hierarchy
 
 pytestmark = pytest.mark.anyio
 
@@ -188,3 +190,187 @@ async def test_admin_writes_domain_resources(client: AsyncClient) -> None:
         headers=ADMIN,
     )
     assert response.status_code == 201
+
+
+# --- Throttling and lockout on failed token authentication -----------------
+
+BAD = {"Authorization": "Bearer wrong-secret"}
+
+DEFAULT_MAX_FAILURES = 10
+
+
+class FakeClock:
+    def __init__(self, start: float = 1_000.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def client_from(app: FastAPI, host: str) -> AsyncClient:
+    """A client whose requests arrive from the given socket peer address."""
+    transport = ASGITransport(app=app, client=(host, 40000))
+    return AsyncClient(transport=transport, base_url="http://testserver")
+
+
+def install_limiter(
+    app: FastAPI,
+    clock: FakeClock,
+    *,
+    max_failures: int = 3,
+    window_seconds: float = 60,
+    lockout_seconds: float = 300,
+) -> None:
+    app.state.auth_limiter = AuthRateLimiter(
+        max_failures=max_failures,
+        window_seconds=window_seconds,
+        lockout_seconds=lockout_seconds,
+        clock=clock,
+    )
+
+
+@pytest.fixture
+async def proxy_app(database_url: str) -> AsyncIterator[FastAPI]:
+    """An application that trusts one reverse proxy in front of it."""
+    async with build_app(database_url, trusted_proxy=True) as application:
+        yield application
+
+
+async def test_failed_auths_lock_the_source(app: FastAPI) -> None:
+    async with client_from(app, "192.0.2.1") as client:
+        for _ in range(DEFAULT_MAX_FAILURES):
+            response = await client.get("/api/v1/me", headers=BAD)
+            assert response.status_code == 401
+        locked = await client.get("/api/v1/me", headers=BAD)
+        assert locked.status_code == 429
+        assert locked.headers["content-type"] == "application/problem+json"
+        assert locked.json()["error_code"] == "auth.rate_limited"
+        assert 1 <= int(locked.headers["retry-after"]) <= 300
+
+
+async def test_lockout_also_rejects_valid_tokens(app: FastAPI) -> None:
+    async with client_from(app, "192.0.2.2") as client:
+        for _ in range(DEFAULT_MAX_FAILURES):
+            await client.get("/api/v1/me", headers=BAD)
+        response = await client.get("/api/v1/me", headers=ACTOR)
+        assert response.status_code == 429
+        assert "retry-after" in response.headers
+
+
+async def test_lockout_is_per_source(app: FastAPI) -> None:
+    async with (
+        client_from(app, "192.0.2.3") as abuser,
+        client_from(app, "192.0.2.4") as bystander,
+    ):
+        for _ in range(DEFAULT_MAX_FAILURES):
+            await abuser.get("/api/v1/me", headers=BAD)
+        assert (await abuser.get("/api/v1/me", headers=ACTOR)).status_code == 429
+        assert (await bystander.get("/api/v1/me", headers=ACTOR)).status_code == 200
+        assert (await bystander.get("/api/v1/me", headers=BAD)).status_code == 401
+
+
+async def test_successful_auths_are_never_counted(app: FastAPI) -> None:
+    async with client_from(app, "192.0.2.5") as client:
+        for _ in range(2 * DEFAULT_MAX_FAILURES + 5):
+            response = await client.get("/api/v1/me", headers=ACTOR)
+            assert response.status_code == 200
+        # If successes counted, the source would already be locked.
+        assert (await client.get("/api/v1/me", headers=BAD)).status_code == 401
+        assert (await client.get("/api/v1/me", headers=ACTOR)).status_code == 200
+
+
+async def test_a_success_does_not_reset_the_failure_count(app: FastAPI) -> None:
+    async with client_from(app, "192.0.2.6") as client:
+        for _ in range(DEFAULT_MAX_FAILURES - 1):
+            assert (await client.get("/api/v1/me", headers=BAD)).status_code == 401
+        assert (await client.get("/api/v1/me", headers=ACTOR)).status_code == 200
+        assert (await client.get("/api/v1/me", headers=BAD)).status_code == 401
+        assert (await client.get("/api/v1/me", headers=ACTOR)).status_code == 429
+
+
+async def test_lockout_expires_after_the_configured_time(app: FastAPI) -> None:
+    clock = FakeClock()
+    install_limiter(app, clock, max_failures=3, lockout_seconds=300)
+    async with client_from(app, "192.0.2.7") as client:
+        for _ in range(3):
+            assert (await client.get("/api/v1/me", headers=BAD)).status_code == 401
+        locked = await client.get("/api/v1/me", headers=ACTOR)
+        assert locked.status_code == 429
+        assert locked.headers["retry-after"] == "300"
+        clock.advance(299)
+        nearly = await client.get("/api/v1/me", headers=ACTOR)
+        assert nearly.status_code == 429
+        assert nearly.headers["retry-after"] == "1"
+        clock.advance(2)
+        assert (await client.get("/api/v1/me", headers=ACTOR)).status_code == 200
+        # The failure budget restarted: one more failure is a 401, not a 429.
+        assert (await client.get("/api/v1/me", headers=BAD)).status_code == 401
+
+
+async def test_locked_responses_do_not_reveal_whether_a_token_exists(app: FastAPI) -> None:
+    clock = FakeClock()
+    install_limiter(app, clock, max_failures=2, lockout_seconds=300)
+    async with client_from(app, "192.0.2.8") as client:
+        for _ in range(2):
+            assert (await client.get("/api/v1/me", headers=BAD)).status_code == 401
+        valid = await client.get("/api/v1/me", headers=ACTOR)
+        invalid = await client.get("/api/v1/me", headers=BAD)
+        missing = await client.get("/api/v1/me")
+        assert valid.status_code == invalid.status_code == missing.status_code == 429
+        assert valid.json() == invalid.json() == missing.json()
+        assert (
+            valid.headers["retry-after"]
+            == invalid.headers["retry-after"]
+            == missing.headers["retry-after"]
+            == "300"
+        )
+
+
+async def test_429_uses_the_problem_details_shape(app: FastAPI) -> None:
+    clock = FakeClock()
+    install_limiter(app, clock, max_failures=1)
+    async with client_from(app, "192.0.2.9") as client:
+        await client.get("/api/v1/me", headers=BAD)
+        response = await client.get("/api/v1/me", headers=BAD)
+        assert response.status_code == 429
+        body = response.json()
+        assert body["status"] == 429
+        assert body["title"]
+        assert body["detail"]
+        assert body["instance"] == "/api/v1/me"
+        assert body["error_code"] == "auth.rate_limited"
+
+
+async def test_forwarded_header_is_ignored_without_trusted_proxy(app: FastAPI) -> None:
+    async with client_from(app, "192.0.2.44") as client:
+        for index in range(DEFAULT_MAX_FAILURES):
+            headers = {**BAD, "X-Forwarded-For": f"10.0.0.{index}"}
+            assert (await client.get("/api/v1/me", headers=headers)).status_code == 401
+        # Varying the spoofable header did not spread the failures across
+        # sources: the socket peer is locked.
+        response = await client.get("/api/v1/me", headers={**ACTOR, "X-Forwarded-For": "10.0.0.99"})
+        assert response.status_code == 429
+
+
+async def test_trusted_proxy_attributes_failures_to_the_forwarded_client(
+    proxy_app: FastAPI,
+) -> None:
+    async with client_from(proxy_app, "127.0.0.1") as client:
+        for _ in range(DEFAULT_MAX_FAILURES):
+            headers = {**BAD, "X-Forwarded-For": "203.0.113.7"}
+            assert (await client.get("/api/v1/me", headers=headers)).status_code == 401
+        locked = await client.get("/api/v1/me", headers={**ACTOR, "X-Forwarded-For": "203.0.113.7"})
+        assert locked.status_code == 429
+        # A left-hand entry the attacker prepends does not change the source:
+        # only the rightmost entry, appended by the trusted proxy, is used.
+        spoofed = await client.get(
+            "/api/v1/me", headers={**ACTOR, "X-Forwarded-For": "198.51.100.1, 203.0.113.7"}
+        )
+        assert spoofed.status_code == 429
+        other = await client.get("/api/v1/me", headers={**ACTOR, "X-Forwarded-For": "203.0.113.8"})
+        assert other.status_code == 200
+        direct = await client.get("/api/v1/me", headers=ACTOR)
+        assert direct.status_code == 200

@@ -9,7 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .errors import DomainError
+from .errors import DomainError, RateLimitedError
 
 PROBLEM_TYPE = "https://github.com/NishikawaButterfly/critical-facilities-manager#problem-details"
 PROBLEM_MEDIA_TYPE = "application/problem+json"
@@ -24,6 +24,7 @@ def problem_response(
     detail: str,
     error_code: str,
     invalid_params: list[dict[str, str]] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     body: dict[str, Any] = {
         "type": PROBLEM_TYPE,
@@ -35,19 +36,30 @@ def problem_response(
     }
     if invalid_params:
         body["invalid_params"] = invalid_params
-    headers = {"WWW-Authenticate": "Bearer"} if status == UNAUTHORIZED_STATUS else None
-    return JSONResponse(body, status_code=status, media_type=PROBLEM_MEDIA_TYPE, headers=headers)
+    response_headers = dict(headers) if headers else {}
+    if status == UNAUTHORIZED_STATUS:
+        response_headers.setdefault("WWW-Authenticate", "Bearer")
+    return JSONResponse(
+        body,
+        status_code=status,
+        media_type=PROBLEM_MEDIA_TYPE,
+        headers=response_headers or None,
+    )
 
 
 async def _handle_domain_error(request: Request, exc: Exception) -> JSONResponse:
     if not isinstance(exc, DomainError):  # pragma: no cover - registration guarantees the type
         raise exc
+    headers: dict[str, str] | None = None
+    if isinstance(exc, RateLimitedError):
+        headers = {"Retry-After": str(exc.retry_after_seconds)}
     return problem_response(
         request,
         status=exc.status_code,
         title=exc.title,
         detail=exc.detail,
         error_code=exc.error_code,
+        headers=headers,
     )
 
 

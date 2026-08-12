@@ -20,7 +20,10 @@ development and interfaces may change without notice.
   minted by an admin (or the bootstrap script), can expire, and can be
   revoked; the secret is generated server-side, shown exactly once at
   creation, and stored only as a SHA-256 hash that is compared in constant
-  time on lookup. Users have no passwords and cannot self-register — this
+  time on lookup. Failed authentications are throttled per network source
+  and repeat offenders are locked out (see
+  [Authentication rate limiting](#authentication-rate-limiting)).
+  Users have no passwords and cannot self-register — this
   is an API-first operations tool, so authentication is token-only until a
   future frontend brings interactive login. Three roles: `viewer` reads
   everything, `engineer` additionally runs every domain workflow, and
@@ -120,6 +123,11 @@ development and interfaces may change without notice.
 - Site-scoped administration. User, token, and grant management is gated by
   the admin role alone; an admin's own site grants scope their domain
   writes, not whom they can manage.
+- Cross-process rate limiting. The authentication throttle counts in
+  process memory; with several workers each process enforces its own
+  limit (see [Authentication rate limiting](#authentication-rate-limiting)).
+  A shared store — or limits at the reverse proxy — is future work for
+  multi-worker deployments.
 - File and photo evidence on commissioning tests. Evidence is limited to
   structured text notes until object storage lands.
 - A frontend.
@@ -159,8 +167,51 @@ Settings use the `CFM_` prefix (see `.env.example`):
 | `CFM_DB_AUTO_UPGRADE` | `false` | Run pending migrations at startup instead of refusing to start |
 | `CFM_DOCS_ENABLED` | `true` | Enable OpenAPI browser pages |
 | `CFM_CORS_ORIGINS` | localhost origins | JSON array of allowed web origins |
+| `CFM_AUTH_MAX_FAILURES` | `10` | Failed authentications per source before lockout; `0` disables the limiter |
+| `CFM_AUTH_FAILURE_WINDOW_SECONDS` | `60` | Sliding window within which failures accumulate |
+| `CFM_AUTH_LOCKOUT_SECONDS` | `300` | How long a locked source keeps receiving 429 |
+| `CFM_TRUSTED_PROXY` | `false` | Attribute failures to the final `X-Forwarded-For` entry appended by one trusted reverse proxy |
 
 For PostgreSQL, use a URL such as `postgresql+psycopg://cfm:cfm@db:5432/cfm`.
+
+## Authentication rate limiting
+
+Failed token authentications are throttled per network source: after
+`CFM_AUTH_MAX_FAILURES` failures within a sliding window of
+`CFM_AUTH_FAILURE_WINDOW_SECONDS`, the source is locked for
+`CFM_AUTH_LOCKOUT_SECONDS`, and every authenticated route answers it with
+`429` plus a `Retry-After` header — for valid and invalid tokens alike, and
+with one constant body, so a locked-out caller learns nothing about any
+token by probing further. Successful authentications are never counted and
+cost only a dictionary lookup; requests without credentials are rejected
+with `401` but do not count either, so unauthenticated scanning cannot lock
+out a NAT gateway shared with legitimate clients. Each lockout is reported
+once through the standard `logging` module. Failed attempts deliberately
+write nothing to the audit trail: that table is append-only domain history,
+and per-failure entries would let an unauthenticated attacker grow it
+without bound.
+
+The source is the peer address of the connection. `X-Forwarded-For` is
+ignored by default because any client can write that header. Set
+`CFM_TRUSTED_PROXY=true` only when exactly one reverse proxy you control
+sits directly in front of the app and appends the real client address as
+the final `X-Forwarded-For` entry (what nginx, traefik, and caddy do);
+then that final entry becomes the source, and earlier entries remain
+untrusted.
+
+Honest scope: the counters live in process memory. With a single process —
+the SQLite deployment story — the limits are exact. With several workers
+or replicas each process counts on its own, so the effective per-source
+limit is the configured one multiplied by the process count; that is still
+a hard cap, just not a shared one, and a shared-store limiter was
+deliberately not bought at the price of a database write per failure on
+the authentication path. What this defends against: online token guessing
+and noisy scanning from single sources — a locked source gets at most
+`CFM_AUTH_MAX_FAILURES` tries per lockout period instead of thousands per
+second. What it cannot defend against: offline attacks (only SHA-256
+hashes of the 256-bit secrets are stored, so there is nothing usable to
+steal in the first place) and attacks spread across many sources, which
+per-source accounting inherently only limits per source.
 
 ## Database migrations
 
@@ -324,9 +375,13 @@ carry `invalid_params`, a list of `{name, reason}` objects.
 Authentication failures return `401` with a `WWW-Authenticate: Bearer`
 header and either `auth.credentials_required` (no usable header) or
 `auth.invalid_token` — the latter is deliberately vague so responses do not
-reveal whether a token exists, is revoked, or has expired. Role failures
-return `403` with `auth.forbidden`; a write whose target site no grant
-covers returns `403` with `auth.scope_forbidden`.
+reveal whether a token exists, is revoked, or has expired. A source that
+keeps failing authentication receives `429` with `auth.rate_limited`, a
+`Retry-After` header, and a body that is identical whatever token was
+presented (see
+[Authentication rate limiting](#authentication-rate-limiting)). Role
+failures return `403` with `auth.forbidden`; a write whose target site no
+grant covers returns `403` with `auth.scope_forbidden`.
 
 ## License
 
