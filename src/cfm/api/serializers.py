@@ -31,6 +31,8 @@ from ..models import (
     CommissioningEvidence,
     CommissioningTest,
     Constraint,
+    EvidenceAttachment,
+    EvidenceObject,
     Incident,
     Location,
     MaintenanceOrder,
@@ -48,6 +50,8 @@ from ..schemas import (
     CommissioningEvidenceResponse,
     CommissioningTestResponse,
     ConstraintResponse,
+    EvidenceAttachmentResponse,
+    EvidenceObjectResponse,
     IncidentResponse,
     LocationResponse,
     MaintenanceOrderResponse,
@@ -240,6 +244,32 @@ def commissioning_test_response(test: CommissioningTest) -> CommissioningTestRes
         evidence=[commissioning_evidence_response(entry) for entry in test.evidence],
         created_at=ensure_utc(test.created_at),
         updated_at=ensure_utc(test.updated_at),
+    )
+
+
+def evidence_object_response(evidence_object: EvidenceObject) -> EvidenceObjectResponse:
+    return EvidenceObjectResponse(
+        id=evidence_object.id,
+        sha256=evidence_object.sha256,
+        size_bytes=evidence_object.size_bytes,
+        filename=evidence_object.filename,
+        content_type=evidence_object.content_type,
+        uploaded_by=evidence_object.uploaded_by,
+        created_at=ensure_utc(evidence_object.created_at),
+    )
+
+
+def evidence_attachment_response(attachment: EvidenceAttachment) -> EvidenceAttachmentResponse:
+    return EvidenceAttachmentResponse(
+        id=attachment.id,
+        evidence_object=evidence_object_response(attachment.evidence_object),
+        commissioning_test_id=attachment.commissioning_test_id,
+        punch_item_id=attachment.punch_item_id,
+        order_id=attachment.order_id,
+        permit_id=attachment.permit_id,
+        note=attachment.note,
+        attached_by=attachment.attached_by,
+        attached_at=ensure_utc(attachment.attached_at),
     )
 
 

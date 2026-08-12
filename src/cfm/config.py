@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -42,6 +43,16 @@ class Settings(BaseSettings):
     # X-Forwarded-For (the address the proxy appended) instead of the
     # socket peer. Off by default because the header is client-writable.
     trusted_proxy: bool = False
+    # Root directory of the content-addressed evidence store, created on
+    # demand. Local filesystem only for now; an S3-compatible remote
+    # backend is future work behind the same store interface.
+    evidence_dir: Path = Path("./evidence")
+    # Upper bound, in mebibytes, on one uploaded evidence file. The default
+    # comfortably covers site photos, scanned certificates, and PDF test
+    # reports while keeping the memory that download verification buffers
+    # bounded; deployments that need large videos should raise it (and its
+    # costs) deliberately.
+    evidence_max_mb: int = Field(default=25, ge=1)
 
     @field_validator("api_prefix")
     @classmethod

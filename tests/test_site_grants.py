@@ -9,8 +9,6 @@ require an installation-wide grant. Reads stay installation-wide.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
@@ -23,34 +21,10 @@ from .conftest import (
     create_hierarchy,
     create_order,
     create_punch_item,
+    create_scoped_user,
 )
 
 pytestmark = pytest.mark.anyio
-
-
-async def create_scoped_user(
-    client: AsyncClient,
-    username: str,
-    *,
-    role: str = "engineer",
-    site_ids: list[str] | None = None,
-) -> tuple[dict[str, Any], dict[str, str]]:
-    """Create a user (optionally site-scoped), mint a token, return (user, headers)."""
-    body: dict[str, Any] = {
-        "username": username,
-        "display_name": username.replace("-", " ").title(),
-        "role": role,
-    }
-    if site_ids is not None:
-        body["site_ids"] = site_ids
-    created = await client.post("/api/v1/users", json=body, headers=ADMIN)
-    assert created.status_code == 201, created.text
-    user: dict[str, Any] = created.json()
-    minted = await client.post(
-        f"/api/v1/users/{user['id']}/tokens", json={"label": "test"}, headers=ADMIN
-    )
-    assert minted.status_code == 201, minted.text
-    return user, {"Authorization": f"Bearer {minted.json()['token']}"}
 
 
 async def test_site_scoped_engineer_cannot_write_on_another_site(client: AsyncClient) -> None:

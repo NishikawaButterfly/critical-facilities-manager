@@ -9,8 +9,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api import router
+from .bodylimit import EvidenceBodyLimitMiddleware
 from .config import Settings, get_settings
 from .database import build_engine, build_session_factory
+from .evidence import EvidenceStore
 from .migrate import ensure_schema_current, upgrade_to_head
 from .problems import register_problem_handlers
 from .ratelimit import AuthRateLimiter
@@ -56,6 +58,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         max_failures=runtime_settings.auth_max_failures,
         window_seconds=runtime_settings.auth_failure_window_seconds,
         lockout_seconds=runtime_settings.auth_lockout_seconds,
+    )
+    application.state.evidence_store = EvidenceStore(runtime_settings.evidence_dir)
+    # Added before CORS so CORS stays outermost and even a 413 rejected
+    # here reaches browsers with the usual CORS headers.
+    application.add_middleware(
+        EvidenceBodyLimitMiddleware,
+        api_prefix=runtime_settings.api_prefix,
+        max_file_bytes=runtime_settings.evidence_max_mb * 1024 * 1024,
     )
     application.add_middleware(
         CORSMiddleware,
