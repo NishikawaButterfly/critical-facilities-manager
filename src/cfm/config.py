@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./cfm.db"
     db_auto_upgrade: bool = False
     docs_enabled: bool = True
+    # Serve the bundled web frontend at /ui (and redirect / to it). Turn it
+    # off for deployments that want the API surface and nothing else.
+    web_enabled: bool = True
     cors_origins: list[str] = Field(
         default_factory=lambda: [
             "http://localhost:3000",

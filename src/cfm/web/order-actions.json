@@ -1,0 +1,46 @@
+{
+  "statuses": ["draft", "scheduled", "in_progress", "done", "cancelled"],
+  "labels": {
+    "draft": "Draft",
+    "scheduled": "Scheduled",
+    "in_progress": "In progress",
+    "done": "Done",
+    "cancelled": "Cancelled"
+  },
+  "actions": {
+    "draft": [
+      { "to": "scheduled", "path": "schedule", "label": "Schedule" },
+      {
+        "to": "cancelled",
+        "path": "cancel",
+        "label": "Cancel",
+        "field": { "name": "reason", "label": "Reason", "required": false }
+      }
+    ],
+    "scheduled": [
+      { "to": "in_progress", "path": "start", "label": "Start" },
+      {
+        "to": "cancelled",
+        "path": "cancel",
+        "label": "Cancel",
+        "field": { "name": "reason", "label": "Reason", "required": false }
+      }
+    ],
+    "in_progress": [
+      {
+        "to": "done",
+        "path": "complete",
+        "label": "Complete",
+        "field": { "name": "completion_notes", "label": "Completion notes", "required": true }
+      },
+      {
+        "to": "cancelled",
+        "path": "cancel",
+        "label": "Cancel",
+        "field": { "name": "reason", "label": "Reason", "required": false }
+      }
+    ],
+    "done": [],
+    "cancelled": []
+  }
+}

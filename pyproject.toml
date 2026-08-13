@@ -42,7 +42,18 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-cfm = ["py.typed", "migrations/script.py.mako", "migrations/versions/*.py"]
+cfm = [
+  "py.typed",
+  "migrations/script.py.mako",
+  "migrations/versions/*.py",
+  # The web frontend ships inside the package: no build step produces it, so
+  # the files in the tree are the files that get served.
+  "web/*.css",
+  "web/*.html",
+  "web/*.js",
+  "web/*.json",
+  "web/views/*.js",
+]
 
 [tool.ruff]
 target-version = "py312"
