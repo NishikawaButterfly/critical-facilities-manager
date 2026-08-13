@@ -50,7 +50,14 @@ export async function renderBoard({ session }) {
   const flash = new Map();
   /** Order id whose action form is open, so a re-paint does not close it. */
   let openForm = null;
+  /** Order id to focus once the next paint has replaced the cards. */
   let focusAfterPaint = null;
+  /** The card element painted for each order id, rebuilt on every paint.
+   *
+   * Focus restoration reads it: after a paint the old card is detached,
+   * so the element to focus is the one this paint just built.
+   */
+  const cardsById = new Map();
 
   const container = el("div", { class: "board-root" });
   const header = el("div", {});
@@ -198,6 +205,7 @@ export async function renderBoard({ session }) {
   }
 
   function paint() {
+    cardsById.clear();
     const grouped = new Map(table.statuses.map((status) => [status, []]));
     for (const order of orders.values()) {
       if (!grouped.has(order.status)) {
@@ -223,9 +231,9 @@ export async function renderBoard({ session }) {
       }),
     );
     if (focusAfterPaint !== null) {
-      const card = container.querySelector(`#order-${CSS.escape(focusAfterPaint)}`);
+      const card = cardsById.get(focusAfterPaint);
       focusAfterPaint = null;
-      if (card !== null) {
+      if (card !== undefined) {
         card.focus();
       }
     }
