@@ -37,6 +37,13 @@ dev = [
   "pytest-cov>=6,<8",
   "ruff==0.16.0",
 ]
+# Kept out of `dev` on purpose: the wheel is around 40 MB and the browser it
+# then downloads is another 130 MB, which is a heavy toll on every install
+# for a check that runs in one CI job. Install it, run
+# `playwright install chromium`, then `pytest -m browser`.
+browser = [
+  "playwright>=1.49,<2",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -97,8 +104,15 @@ mypy_path = "src"
 warn_unreachable = true
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers -ra"
+# The browser smoke is deselected by default: it needs the Chromium that
+# `playwright install` downloads, which `pip install -e ".[dev]"` does not
+# imply. Run it with `pytest -m browser` (a command-line -m overrides this
+# one), which is what the Browser smoke CI job does.
+addopts = "--strict-config --strict-markers -ra -m 'not browser'"
 testpaths = ["tests"]
+markers = [
+  "browser: runs the web pages in a headless browser; needs the 'browser' extra",
+]
 
 [tool.coverage.run]
 branch = true
