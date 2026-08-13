@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from cfm import __version__
 from cfm.config import Settings
 
 
@@ -12,7 +13,10 @@ def test_default_settings() -> None:
     assert settings.database_url == "sqlite:///./cfm.db"
     assert settings.db_auto_upgrade is False
     assert settings.docs_enabled is True
-    assert settings.app_version == "0.1.0"
+    # Asserted against the package's own version so a release bumps one
+    # place; the point of the setting is that the API reports what is
+    # installed, not that it reports any particular literal.
+    assert settings.app_version == __version__
 
 
 @pytest.mark.parametrize("prefix", ["", "/", "api", "/api/", "/api//v1"])

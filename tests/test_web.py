@@ -24,6 +24,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from cfm import __version__
 from cfm.config import Settings
 from cfm.domain import ORDER_TRANSITIONS, MaintenanceOrderStatus
 from cfm.main import create_app
@@ -162,7 +163,9 @@ async def test_config_reports_the_settings_the_page_cannot_guess(anon_client: As
     assert response.status_code == 200
     payload = response.json()
     assert payload["api_prefix"] == "/api/v1"
-    assert payload["app_version"] == "0.1.0"
+    # The page shows whatever the running build reports, so this asserts the
+    # wiring rather than a literal that every release would have to chase.
+    assert payload["app_version"] == __version__
     assert payload["app_name"]
 
 
