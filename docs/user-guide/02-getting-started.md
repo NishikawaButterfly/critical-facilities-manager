@@ -31,10 +31,12 @@ request.
 
 Ask your administrator for one. They create it as described in
 [Roles and permissions](03-roles-and-permissions.md#creating-a-user); what they
-send you looks like this:
+send you is a single opaque string of about 43 characters, like this
+(illustrative only — yours will be different, and no token in this manual is
+real):
 
 ```
-1Vt3YmW_XV4i2RaPX3WDC2aDBKkNMRIrLswe6OepTcA
+EXAMPLEtokenNOTREALdoNotUseThisValueAnywhere
 ```
 
 Three things to know about it:

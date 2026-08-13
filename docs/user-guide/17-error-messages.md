@@ -33,7 +33,7 @@ that.
 
 ---
 
-## 401 — not authenticated
+## 401: not authenticated
 
 Something is wrong with **the token itself**. Nothing to do with permissions.
 
@@ -66,12 +66,12 @@ Every 401 carries a `WWW-Authenticate: Bearer` header.
 
 ---
 
-## 403 — refused
+## 403: refused
 
 The token is **valid and accepted**; the request is not allowed. Two quite
 different causes, and the code tells them apart.
 
-### `auth.forbidden` — your role
+### `auth.forbidden`: your role
 
 ```
 {"detail":"Role 'viewer' may only read; POST requires an engineer or admin."}
@@ -82,7 +82,7 @@ Your role does not permit this kind of operation at all. Nothing you do will
 change it: roles cannot be edited, so an administrator must create a new account
 at the right role.
 
-### `auth.scope_forbidden` — your site grants
+### `auth.scope_forbidden`: your site grants
 
 ```
 {"detail":"User 'contractor-temp' holds no site grant covering site 6eddaddd-…; this write requires a grant on that site or an installation-wide grant."}
@@ -104,7 +104,7 @@ your role permits and lets the server refuse the rest. That is by design; see
 
 ---
 
-## 404 — not found
+## 404: not found
 
 The thing the URL addressed does not exist.
 
@@ -131,7 +131,7 @@ the path; a `PATCH` where only `POST` exists gives 405 with the same code.
 
 ---
 
-## 409 — conflicts with the current state
+## 409: conflicts with the current state
 
 The request was well-formed and you were allowed to make it. The record is not
 in a state that permits it. **This is the most common refusal in normal use, and
@@ -237,7 +237,7 @@ identical one) rather than the intended one.
 
 ---
 
-## 413 — the upload is too large
+## 413: the upload is too large
 
 Two limits, two codes.
 
@@ -264,11 +264,11 @@ a deliberate decision, not a formality.
 
 ---
 
-## 422 — the request broke a rule
+## 422: the request broke a rule
 
 Two quite different things share this status.
 
-### `api.validation_failed` — the payload is malformed
+### `api.validation_failed`: the payload is malformed
 
 The field is wrong before any domain rule is consulted, and `invalid_params`
 names each problem:
@@ -295,7 +295,7 @@ Common causes:
 | `Extra inputs are not permitted` | A field this endpoint does not accept. **Usually a typo in a field name** — the request bodies reject anything unrecognised rather than ignoring it. |
 | `Input should be less than or equal to 200` | `limit` above 200 |
 
-### Everything else — a domain rule
+### Everything else: a domain rule
 
 The payload was well-formed; what it asked for is not allowed.
 
@@ -344,7 +344,7 @@ the missing thing was a value in your body, not the resource the URL addressed:
 
 ---
 
-## 429 — rate limited
+## 429: rate limited
 
 ```
 HTTP/1.1 429 Too Many Requests
@@ -377,7 +377,7 @@ you out, and will keep working if something else does.
 
 ---
 
-## 500 — evidence failed verification
+## 500: evidence failed verification
 
 One 500 in this system is deliberate and means something specific:
 

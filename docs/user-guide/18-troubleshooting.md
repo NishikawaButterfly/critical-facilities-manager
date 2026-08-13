@@ -23,7 +23,7 @@ $ curl -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/me
 - `/health` fails or does not answer → the service is down or you have the
   wrong address. Talk to whoever runs it.
 - `/health` is fine, `/me` gives 401 → the problem is your token
-  ([401](17-error-messages.md#401--not-authenticated)).
+  ([401](17-error-messages.md#401-not-authenticated)).
 - Both fine → the service and your token are both good; the problem is with the
   specific operation.
 

@@ -11,7 +11,7 @@ entry says what the software actually does with it.
 audit entry. Not a display name and not a session. Two people sharing a token
 are indistinguishable. See [The audit trail](14-audit-trail.md).
 
-**Advisory constraint** — A [constraint](#constraint) that carries guidance as
+**Advisory constraint** — A *constraint* that carries guidance as
 free text and is never enforced. Its description is required precisely because
 the text is the whole of it.
 
@@ -25,16 +25,16 @@ append-only at the database level: `UPDATE` and `DELETE` are refused even from a
 direct connection.
 
 **Asset** — One piece of equipment, identified by a `tag` unique within its
-[site](#site) and located at any level of the hierarchy. See
+*site* and located at any level of the hierarchy. See
 [Assets](05-assets.md).
 
 **Asset type** — Free-text category (`ups`, `chiller`, `crac`). Not a controlled
 list; whatever you type becomes the type.
 
 **Audit entry** — One immutable line recording who changed what, when, and under
-which authorization [scope](#scope). See [The audit trail](14-audit-trail.md).
+which authorization *scope*. See [The audit trail](14-audit-trail.md).
 
-**Blocking** — The highest [punch item](#punch-item) severity. Conventionally
+**Blocking** — The highest *punch item* severity. Conventionally
 means acceptance cannot proceed; blocks nothing in software.
 
 **Bootstrap** — The command-line script that creates the first admin on an empty
@@ -49,8 +49,8 @@ as passed or failed, naming an executor and a different witness. See
 (never enforced). Created and retired, never edited. See
 [Operational constraints](09-operational-constraints.md).
 
-**Corrective** — A [maintenance order](#maintenance-order) that repairs
-something. The type raised automatically from an [incident](#incident).
+**Corrective** — A *maintenance order* that repairs
+something. The type raised automatically from an *incident*.
 
 **Criticality** — `low`, `medium`, `high`, or `critical` on an asset. Purely
 descriptive; the system behaves identically whatever it says.
@@ -59,13 +59,13 @@ descriptive; the system behaves identically whatever it says.
 of a procedure (still editable). The two are unrelated.
 
 **EOP** — Emergency Operating Procedure. One of the three
-[procedure](#procedure) kinds; treated identically to the others.
+*procedure* kinds; treated identically to the others.
 
 **Evidence attachment** — The record of one file being attached to one record:
 which file, which record, by whom, when, with what note. The auditable act. See
 [Evidence](13-evidence.md).
 
-**Evidence note** — A text note on a [commissioning test](#commissioning-test),
+**Evidence note** — A text note on a *commissioning test*,
 carrying its author and timestamp. Append-only, and only while the test is
 pending. Distinct from an evidence file.
 
@@ -76,13 +76,13 @@ Identical uploads deduplicate onto the same object. Write-once; never deleted.
 approver, a permit's issuer, a test's witness, and a punch item's verifier must
 each differ from the person who did the other half. Compares usernames.
 
-**Grant** — See [Site grant](#site-grant).
+**Grant** — See *Site grant*.
 
 **Incident** — An unplanned event observed on an asset. May raise one corrective
 maintenance order while still open or investigating. See
 [Incidents](10-incidents.md).
 
-**Installation-wide grant** — A [site grant](#site-grant) with no site, covering
+**Installation-wide grant** — A *site grant* with no site, covering
 every site plus the objects that belong to no site — procedures, constraints,
 and sites themselves.
 
@@ -98,16 +98,16 @@ adjacency; a location cannot be moved once created. See
 corrective, moving through draft → scheduled → in progress → done, or cancelled
 from any of those. See [Maintenance orders](06-maintenance-orders.md).
 
-**MOP** — Method of Procedure. One of the three [procedure](#procedure) kinds.
+**MOP** — Method of Procedure. One of the three *procedure* kinds.
 
-**Mutual exclusive maintenance** — The enforced [constraint](#constraint) kind:
+**Mutual exclusive maintenance** — The enforced *constraint* kind:
 only one member asset may have an order in progress at a time. Checked when an
 order starts, and nowhere else.
 
 **Overdue** — A punch item past its due date and not yet closed. The only
 date-aware filter in the product; available on punch items only.
 
-**Preventive** — A [maintenance order](#maintenance-order) for planned upkeep.
+**Preventive** — A *maintenance order* for planned upkeep.
 
 **Procedure** — A versioned, numbered set of steps: a MOP, SOP, or EOP. Drafted,
 approved by someone else, then frozen; changed only by a new version. See
@@ -121,7 +121,7 @@ approved by someone else, then frozen; changed only by a new version. See
 finding, against exactly one asset or one location. Started by the fixer, closed
 by somebody else. Cannot be edited. See [Punch items](12-punch-items.md).
 
-**Requested** — The starting state of a [work permit](#work-permit): asked for,
+**Requested** — The starting state of a *work permit*: asked for,
 not yet authorization to do anything. The only route out is issuing.
 
 **Retired** — Terminal state of a procedure (withdrawn from use) or a constraint
@@ -135,9 +135,9 @@ may perform; cannot be changed after the account is created. See
 [Roles and permissions](03-roles-and-permissions.md).
 
 **Scope** — Two unrelated meanings:
-1. On a [work permit](#work-permit): the free text saying what the permit
+1. On a *work permit*: the free text saying what the permit
    authorizes. The most important field on it.
-2. On an [audit entry](#audit-entry): the authorization the write went through —
+2. On an *audit entry*: the authorization the write went through —
    `installation`, `site:<id>`, or null.
 
 **SHA-256** — The content hash under which every evidence file is stored,
@@ -152,7 +152,7 @@ under it, or the whole installation. Reads are never scoped. See
 [Roles and permissions](03-roles-and-permissions.md#site-grants-where-you-may-write).
 
 **SOP** — Standard Operating Procedure. One of the three
-[procedure](#procedure) kinds.
+*procedure* kinds.
 
 **Terminal state** — A state with no legal transitions out. `done`, `cancelled`,
 `closed`, `revoked`, `resolved`, `dismissed`, `passed`, `failed`, `retired`, and
@@ -166,7 +166,7 @@ Illegal moves are refused with a message naming what is allowed.
 somebody must transition the asset.
 
 **Witness** — The user named as having observed a
-[commissioning test](#commissioning-test). Must be an active user of this
+*commissioning test*. Must be an active user of this
 installation and must not be the executor. Is never asked to confirm anything.
 
 **Work permit** — Authorization to carry out one maintenance order, optionally

@@ -246,7 +246,7 @@ $ curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: applica
   "expires_at": null,
   "revoked": false,
   "created_at": "2026-08-13T18:22:51.367796Z",
-  "token": "s6WIFGcg1-4ehlb4ptU9HP4Sp2HJaaYLjhA6XgO-PHs"
+  "token": "EXAMPLEtokenNOTREALdoNotUseThisValueAnywhere"
 }
 ```
 
