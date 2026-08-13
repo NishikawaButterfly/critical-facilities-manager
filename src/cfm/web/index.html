@@ -75,7 +75,10 @@
           the order&rsquo;s current status allows are offered, and only when the token&rsquo;s role
           may write; the server remains the authority and its refusals are shown verbatim.
         </p>
-        <div id="board-root" class="board-root" aria-busy="false"></div>
+        <!-- Plain mount: the board view supplies its own .board-root grid
+             below its header, and carrying the class here too would make
+             this element a second grid that lays the two out side by side. -->
+        <div id="board-root" aria-busy="false"></div>
       </section>
 
       <section id="view-audit" class="view" aria-labelledby="view-audit-heading" hidden>
