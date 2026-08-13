@@ -12,6 +12,11 @@ This project was developed and tested privately before its first public
 release. The private history stays private; changes since then land in the
 open, issue by issue.
 
+**To operate the system rather than read about it, start with the
+[User Manual](docs/user-guide/README.md)** — twenty chapters covering every
+operation, the workflows that string them together, and what each refusal
+means. This README describes what the platform is and how it is built.
+
 ## What exists today
 
 - **Users, API tokens, and roles** — every request except `/health` carries
