@@ -1,17 +1,16 @@
 # Critical Facilities Manager
 
-This repository contains the first public release of a project developed
-and tested privately. The private history stays private; from here on,
-changes land in the open.
-
-
 Operations platform for critical facilities (data centers and similar), built
 as the operational counterpart to the validation and simulation projects in
-this account. This repository currently contains the **domain core and the
-operational workflows around it** (procedures, work permits, incidents,
-commissioning tests, punch items, operational constraints) behind a
-token-authenticated, role-guarded, versioned REST API; it is under active
-development and interfaces may change without notice.
+this account. It carries the **domain core and the operational workflows
+around it** — procedures, work permits, incidents, commissioning tests, punch
+items, operational constraints — behind a token-authenticated, role-guarded,
+versioned REST API, with a small web interface over that API. It is under
+active development and interfaces may change without notice.
+
+This project was developed and tested privately before its first public
+release. The private history stays private; changes since then land in the
+open, issue by issue.
 
 ## What exists today
 
