@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "critical-facilities-manager"
-version = "0.1.0"
+version = "0.2.0"
 description = "Operations API for critical facilities: location hierarchy, asset inventory, maintenance orders, and an append-only audit trail."
 readme = "README.md"
 requires-python = ">=3.12"

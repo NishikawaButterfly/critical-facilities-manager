@@ -17,7 +17,7 @@ async def test_health(client: AsyncClient) -> None:
     response = await client.get("/api/v1/health")
     assert response.status_code == 200
     payload = response.json()
-    assert payload == {"status": "ok", "version": "0.1.0", "database": "ok"}
+    assert payload == {"status": "ok", "version": "0.2.0", "database": "ok"}
 
 
 async def test_unknown_route_returns_problem(client: AsyncClient) -> None:
