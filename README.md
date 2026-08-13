@@ -23,9 +23,9 @@ development and interfaces may change without notice.
   time on lookup. Failed authentications are throttled per network source
   and repeat offenders are locked out (see
   [Authentication rate limiting](#authentication-rate-limiting)).
-  Users have no passwords and cannot self-register — this
-  is an API-first operations tool, so authentication is token-only until a
-  future frontend brings interactive login. Three roles: `viewer` reads
+  Users have no passwords and cannot self-register — the web interface
+  authenticates with the same bearer tokens the API does, so there is no
+  session or password story to get wrong. Three roles: `viewer` reads
   everything, `engineer` additionally runs every domain workflow, and
   `admin` additionally manages users and tokens. The authenticated
   username is the actor recorded in the audit trail, which means the
@@ -113,6 +113,10 @@ development and interfaces may change without notice.
   to change it: append-only is enforced by triggers on the audit and
   evidence tables, not just by application convention (see
   [Database migrations](#database-migrations)).
+- **A web interface** — the asset tree, the order board with its state
+  actions, and the audit trail as a timeline, served by the application
+  itself at `/ui` with no build step (see
+  [Web interface](#web-interface)).
 - **Problem-details errors** — every error body follows the RFC 9457 shape
   (see [Problem details](#problem-details)).
 - **OpenAPI docs** — interactive documentation at `/docs` when enabled.
@@ -122,9 +126,9 @@ development and interfaces may change without notice.
 
 ## What does not exist yet
 
-- Sessions and password login. Authentication is API-token-only; interactive
-  login (and any password or SSO story) arrives together with a future
-  frontend.
+- Sessions and password login. Both the API and the web interface
+  authenticate with bearer tokens; there is no session cookie, no password,
+  and no SSO.
 - Site-scoped reads. Site grants scope writes only; every authenticated
   user still reads everything, installation-wide. A commissioning witness
   is also only a validated reference — the scope check applies to the
@@ -148,7 +152,47 @@ development and interfaces may change without notice.
   documented in [Evidence storage](#evidence-storage), not silently
   ignored. Until that design exists, any operational deletion takes a
   deliberate migration, on purpose.
-- A frontend.
+- Editing in the web interface. It reads every domain object and runs the
+  maintenance-order transitions; creating assets, procedures, permits, or
+  incidents still goes through the API.
+
+## Web interface
+
+A small web interface ships with the application at `/ui` — plain HTML,
+CSS, and ES modules served by the same process, with no build step and no
+runtime dependency. Set `CFM_WEB_ENABLED=false` for deployments that want
+the API surface and nothing else. It authenticates with the same bearer
+token the API takes, entered once and kept in the browser's `localStorage`
+(which the page says out loud, next to the button that forgets it).
+
+Three views:
+
+**Asset tree** — locations as the API stores them, with the assets recorded
+against each level and a detail panel for the selected one.
+
+![The asset tree, showing a demo campus expanded to its rooms and the assets recorded in each](assets/screenshots/tree.png)
+
+**Order board** — maintenance orders grouped by workflow status. Only the
+transitions the order's current status allows are offered, and only when
+the token's role may write. Site grants are deliberately not predicted:
+the endpoint that lists them is admin-only, so a page holding an
+engineer's token cannot know which sites that token covers. It offers the
+action, attempts it, and shows the server's refusal verbatim — a 403
+scope error kept visibly distinct from a 401, which is about the token
+itself rather than about what the token may do.
+
+![The order board with orders grouped in draft, scheduled, in-progress and done columns, each card offering only the transitions its status allows](assets/screenshots/board.png)
+
+**Audit timeline** — the trail newest first: actor, action, entity, the
+scope the write was authorized under, and the before/after summary.
+
+![The audit timeline listing recent entries with actor, action, entity and scope](assets/screenshots/audit.png)
+
+Nothing on these pages is invented: every value comes from a response, and
+the two counts shown are the API's own totals. The tree and the board load
+whole inventories by paging at the API's 200-row maximum, which suits this
+system's scale rather than an installation with tens of thousands of
+assets.
 
 ## Local development
 
