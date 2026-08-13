@@ -193,6 +193,25 @@ whole inventories by paging at the API's 200-row maximum, which suits this
 system's scale rather than an installation with tens of thousands of
 assets.
 
+A headless Chromium loads these pages in CI against a seeded demo
+database (`tests/test_browser_smoke.py`, the `Browser smoke (Chromium)`
+job). It covers: each of the three views painting the figures the API
+returned with nothing thrown and nothing logged as an error; a viewer
+token being offered no action buttons and told why; a rejected token
+producing the 401 banner; an action clicked on a card moving its order
+between columns and appearing in the audit timeline; and the board's
+columns laid out as columns rather than collapsed into one. It does not
+check appearance — spacing, colour, and whether any of it looks good are
+outside it — and it runs one browser engine, so a defect specific to
+Firefox or Safari would pass. The tests need a browser binary and are
+therefore left out of the default suite run:
+
+```bash
+python -m pip install -e ".[dev,browser]"
+python -m playwright install chromium
+python -m pytest -m browser
+```
+
 ## Local development
 
 Python 3.12 or newer is required.
@@ -218,10 +237,11 @@ mypy
 python -m pytest
 ```
 
-CI additionally gates test coverage and runs the migration chain and the
+CI additionally gates test coverage, runs the migration chain and the
 full suite against a real PostgreSQL server (set `CFM_TEST_DATABASE_URL`
-to a PostgreSQL URL to do the same locally); day-to-day local runs stay
-on SQLite for speed.
+to a PostgreSQL URL to do the same locally), and loads the web pages in a
+headless browser (see [Web interface](#web-interface)); day-to-day local
+runs stay on SQLite for speed.
 
 ## Configuration
 
