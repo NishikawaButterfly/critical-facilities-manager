@@ -137,7 +137,7 @@ operation:
 
 ```
 $ rm -rf .venv && python3.13 -m venv .venv
-$ .venv/bin/activate
+# Activate .venv with the command for your shell, then:
 $ python -m pip install -e .
 ```
 

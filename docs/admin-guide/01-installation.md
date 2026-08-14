@@ -21,7 +21,7 @@ no separate frontend build. The application is one process.
 $ git clone https://github.com/NishikawaButterfly/critical-facilities-manager.git
 $ cd critical-facilities-manager
 $ python -m venv .venv
-$ .venv/bin/activate            # Windows: .venv\Scripts\activate
+# Activate .venv with the command for your shell, then:
 $ python -m pip install -e .
 ```
 
