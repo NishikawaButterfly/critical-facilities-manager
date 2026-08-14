@@ -42,12 +42,18 @@ directly ([Running behind a reverse proxy](09-reverse-proxy.md)).
 
 This one is easy to get wrong in a way that looks fine.
 
-**Verified:** with `CFM_TRUSTED_PROXY` at its default of `false`, a
-client-supplied `X-Forwarded-For` still decided which source the rate limiter
-counted — because uvicorn enables proxy headers by default and trusts
-`127.0.0.1`. In the same run, a lockout was evaded by changing that header.
+uvicorn enables proxy headers by default and trusts `127.0.0.1`, so it can
+replace the client address from `X-Forwarded-For` before the application looks.
+The application answers that by refusing to count on an address it cannot
+verify: with `CFM_TRUSTED_PROXY` at its default of `false`, every request
+carrying the header counts into one shared `untrusted-forwarded` bucket.
+**Verified:** three failures under one forwarded address locked that bucket, and
+a fourth attempt under a different one was refused `429` — the header no longer
+buys a fresh budget.
 
-Consequences and the fix are in
+That is safe but blunt: clients behind an undeclared proxy share the bucket and
+can lock each other out. Match the setting to your topology and it does not
+happen. Details in
 [Running behind a reverse proxy](09-reverse-proxy.md#uvicorn-rewrites-the-client-address-before-the-application-sees-it).
 The short version:
 

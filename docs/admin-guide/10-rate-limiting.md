@@ -95,7 +95,7 @@ pointless, without locking out real people who mistyped a token.
 
 | Setting | Default | Raise it when | Lower it when |
 |---------|---------|---------------|---------------|
-| `CFM_AUTH_MAX_FAILURES` | `10` | Several people share one source address and get caught in each other's mistakes | You run several workers and want the *effective* limit near the default |
+| `CFM_AUTH_MAX_FAILURES` | `10` | Several people share one source — one address, or the `untrusted-forwarded` bucket — and get caught in each other's mistakes | You run several workers and want the *effective* limit near the default |
 | `CFM_AUTH_FAILURE_WINDOW_SECONDS` | `60` | Failures are naturally spread out (a polling integration retrying slowly) | You want failures to have to be fast to count |
 | `CFM_AUTH_LOCKOUT_SECONDS` | `300` | Under active attack | A locked-out crew cannot wait five minutes |
 
@@ -105,17 +105,36 @@ twelve in total, close enough to the intent, and still comfortable for a person
 who pastes a stale token twice.
 
 Do not raise the lockout to hours. It is per source, so a long lockout punishes
-whoever shares the address — in the same-host proxy layout, potentially
-everyone ([Running behind a reverse proxy](09-reverse-proxy.md)).
+whoever shares that source — everyone behind an undeclared proxy, or everyone
+behind a declared one when the failures land on its own address
+([Running behind a reverse proxy](09-reverse-proxy.md)).
 
 ## Which address gets locked
 
-Whatever the application sees as the client address, which is not always what
-you expect: uvicorn's proxy-header handling can replace it before the
-application looks. That is covered in detail in
-[Running behind a reverse proxy](09-reverse-proxy.md), and it is required
-reading before tuning anything here — a limiter counting the wrong address is
-worse than none, because it looks like it is working.
+Whatever the application sees as the client address — which is not always the
+client's, because uvicorn's proxy-header handling can replace it before the
+application looks. Two rules follow from that:
+
+- **A request with no `X-Forwarded-For` header** counts against the address the
+  application is handed, which is the socket peer unless something upstream
+  substituted one.
+- **A request carrying that header** counts against its rightmost entry when
+  `CFM_TRUSTED_PROXY=true`, and otherwise against a single shared source named
+  `untrusted-forwarded` — whatever address the header claims, and whatever
+  address the application was handed. An unverifiable address is not allowed to
+  divide the counters, or rotating the header would buy a fresh budget per
+  value.
+
+Verified with the defaults: three failures carrying `X-Forwarded-For:
+198.51.100.9, 203.0.113.7` locked `untrusted-forwarded`, and a fourth attempt
+that changed the header to `192.0.2.123` was refused `429` rather than starting
+a new count.
+
+The mechanism, the behaviour of each uvicorn variant, and what the shared
+bucket costs a deployment that never declared its proxy are in
+[Running behind a reverse proxy](09-reverse-proxy.md). It is required reading
+before tuning anything here — a limiter counting the wrong address is worse
+than none, because it looks like it is working.
 
 ## What this does not defend against
 
@@ -144,9 +163,14 @@ the failure count, and the window. Alert on:
   token, or someone is guessing.
 - **Lockouts of many different sources** — a distributed attempt, or a proxy
   misconfiguration attributing every request to a different address.
+- **Any lockout naming `untrusted-forwarded`** — requests are arriving with an
+  `X-Forwarded-For` header while `CFM_TRUSTED_PROXY` is `false`. The throttle
+  is doing its job, but every client sending that header is sharing one bucket
+  and can lock the others out. Declare the proxy, or stop the header from
+  reaching the application ([Running behind a reverse
+  proxy](09-reverse-proxy.md)).
 - **No lockouts ever, on an internet-facing installation** — plausible, but
-  worth confirming the limiter is not disabled and the source attribution is
-  not scattering failures across spoofed addresses.
+  worth confirming the limiter is not disabled.
 
 ---
 
