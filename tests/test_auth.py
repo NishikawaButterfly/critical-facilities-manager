@@ -7,6 +7,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from cfm.models import ApiToken, User
 from cfm.ratelimit import AuthRateLimiter
@@ -216,6 +217,25 @@ def client_from(app: FastAPI, host: str) -> AsyncClient:
     return AsyncClient(transport=transport, base_url="http://testserver")
 
 
+def proxied_client(app: FastAPI, forwarded: str, *, peer: str = "127.0.0.1") -> AsyncClient:
+    """A client sending ``X-Forwarded-For`` through uvicorn's own middleware.
+
+    uvicorn installs :class:`ProxyHeadersMiddleware` unless it is started
+    with ``--no-proxy-headers``, and trusts ``127.0.0.1`` unless
+    ``--forwarded-allow-ips`` says otherwise. From a trusted peer it
+    replaces the client address with an entry taken from the header before
+    any application code runs. The real middleware is used here rather than
+    an imitation of it, so these tests exercise what ``uvicorn
+    cfm.main:app`` actually serves.
+    """
+    transport = ASGITransport(app=ProxyHeadersMiddleware(app), client=(peer, 40000))
+    return AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+        headers={"X-Forwarded-For": forwarded},
+    )
+
+
 def install_limiter(
     app: FastAPI,
     clock: FakeClock,
@@ -344,15 +364,67 @@ async def test_429_uses_the_problem_details_shape(app: FastAPI) -> None:
         assert body["error_code"] == "auth.rate_limited"
 
 
-async def test_forwarded_header_is_ignored_without_trusted_proxy(app: FastAPI) -> None:
+async def test_forwarded_headers_share_one_bucket_without_trusted_proxy(app: FastAPI) -> None:
     async with client_from(app, "192.0.2.44") as client:
         for index in range(DEFAULT_MAX_FAILURES):
             headers = {**BAD, "X-Forwarded-For": f"10.0.0.{index}"}
             assert (await client.get("/api/v1/me", headers=headers)).status_code == 401
         # Varying the spoofable header did not spread the failures across
-        # sources: the socket peer is locked.
+        # sources: every attempt carrying an untrusted header counted into
+        # one bucket, and that bucket is locked.
         response = await client.get("/api/v1/me", headers={**ACTOR, "X-Forwarded-For": "10.0.0.99"})
         assert response.status_code == 429
+        # The failures counted against the shared bucket, not against the
+        # peer: traffic from the same peer without a header keeps its own
+        # budget.
+        assert (await client.get("/api/v1/me", headers=ACTOR)).status_code == 200
+
+
+async def test_rotating_the_forwarded_header_does_not_evade_the_lockout(app: FastAPI) -> None:
+    """The reported bypass, end to end through uvicorn's proxy handling.
+
+    Ten failures arrive claiming one address and lock it; the eleventh
+    claims another address. Attribution that follows a client-writable
+    header would let it through, which is the whole attack.
+    """
+    async with proxied_client(app, "203.0.113.7") as attacker:
+        for _ in range(DEFAULT_MAX_FAILURES):
+            assert (await attacker.get("/api/v1/me", headers=BAD)).status_code == 401
+        assert (await attacker.get("/api/v1/me", headers=BAD)).status_code == 429
+    async with proxied_client(app, "198.51.100.9") as rotated:
+        assert (await rotated.get("/api/v1/me", headers=BAD)).status_code == 429
+        assert (await rotated.get("/api/v1/me", headers=ACTOR)).status_code == 429
+
+
+async def test_a_fresh_forwarded_address_per_attempt_still_locks(app: FastAPI) -> None:
+    for index in range(DEFAULT_MAX_FAILURES):
+        async with proxied_client(app, f"203.0.113.{index}") as attacker:
+            assert (await attacker.get("/api/v1/me", headers=BAD)).status_code == 401
+    async with proxied_client(app, "198.51.100.9") as attacker:
+        assert (await attacker.get("/api/v1/me", headers=ACTOR)).status_code == 429
+
+
+async def test_the_shared_bucket_spares_traffic_without_a_forwarded_header(app: FastAPI) -> None:
+    async with (
+        proxied_client(app, "203.0.113.7") as spoofer,
+        client_from(app, "192.0.2.30") as direct,
+    ):
+        for _ in range(DEFAULT_MAX_FAILURES):
+            assert (await spoofer.get("/api/v1/me", headers=BAD)).status_code == 401
+        assert (await spoofer.get("/api/v1/me", headers=ACTOR)).status_code == 429
+        assert (await direct.get("/api/v1/me", headers=ACTOR)).status_code == 200
+        assert (await direct.get("/api/v1/me", headers=BAD)).status_code == 401
+
+
+async def test_the_shared_bucket_stays_out_of_the_trusted_proxy_path(proxy_app: FastAPI) -> None:
+    async with proxied_client(proxy_app, "203.0.113.7") as first:
+        for _ in range(DEFAULT_MAX_FAILURES):
+            assert (await first.get("/api/v1/me", headers=BAD)).status_code == 401
+        assert (await first.get("/api/v1/me", headers=ACTOR)).status_code == 429
+    async with proxied_client(proxy_app, "198.51.100.9") as second:
+        # With a proxy declared, attribution is per forwarded client again:
+        # one client's lockout leaves the others alone.
+        assert (await second.get("/api/v1/me", headers=ACTOR)).status_code == 200
 
 
 async def test_trusted_proxy_attributes_failures_to_the_forwarded_client(
