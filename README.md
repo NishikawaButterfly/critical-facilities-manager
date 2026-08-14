@@ -15,7 +15,12 @@ open, issue by issue.
 **To operate the system rather than read about it, start with the
 [User Manual](docs/user-guide/README.md)** — twenty chapters covering every
 operation, the workflows that string them together, and what each refusal
-means. This README describes what the platform is and how it is built.
+means. **To install, configure, secure, back up, or upgrade an installation,
+start with the
+[Administrator and Deployment Guide](docs/admin-guide/README.md)** — seventeen
+chapters covering every setting, the migration policy, evidence storage,
+backups and restore, and the failure each of them produces. This README
+describes what the platform is and how it is built.
 
 ## What exists today
 
@@ -26,7 +31,7 @@ means. This README describes what the platform is and how it is built.
   creation, and stored only as a SHA-256 hash that is compared in constant
   time on lookup. Failed authentications are throttled per network source
   and repeat offenders are locked out (see
-  [Authentication rate limiting](#authentication-rate-limiting)).
+  [Rate limiting in production](docs/admin-guide/10-rate-limiting.md)).
   Users have no passwords and cannot self-register — the web interface
   authenticates with the same bearer tokens the API does, so there is no
   session or password story to get wrong. Three roles: `viewer` reads
@@ -85,9 +90,10 @@ means. This README describes what the platform is and how it is built.
   witness that must be a different, active user. Evidence is a list of structured
   text notes (note, actor, UTC timestamp) appended while the test is pending
   or together with the result, plus file evidence (see
-  [Evidence storage](#evidence-storage)). A failed test offers a POST action
-  that opens a pre-filled punch item (once per test), audit-linked in both
-  directions the same way incidents link their corrective orders.
+  [Evidence storage](docs/admin-guide/07-evidence-storage.md)). A failed test
+  offers a POST action that opens a pre-filled punch item (once per test),
+  audit-linked in both directions the same way incidents link their corrective
+  orders.
 - **Punch items** — a defect, missing element, documentation gap, or safety
   finding (`defect | missing | documentation | safety`) scoped to exactly
   one of an asset or a location, with a severity
@@ -108,7 +114,8 @@ means. This README describes what the platform is and how it is built.
   maintenance order, or work permit they evidence. The content is hashed
   server-side while it streams in, stored write-once under its SHA-256, and
   re-verified on every download, so an audit can prove what was attached
-  and that it has not changed (see [Evidence storage](#evidence-storage)).
+  and that it has not changed (see
+  [Evidence storage](docs/admin-guide/07-evidence-storage.md)).
 - **Audit trail** — an append-only entry is written automatically for every
   create, update, delete, and state transition: who (the authenticated
   username), what (entity and action), when (UTC), and a before/after
@@ -116,7 +123,7 @@ means. This README describes what the platform is and how it is built.
   it. The API only ever reads this table, and the database itself refuses
   to change it: append-only is enforced by triggers on the audit and
   evidence tables, not just by application convention (see
-  [Database migrations](#database-migrations)).
+  [Migrations](docs/admin-guide/04-migrations.md)).
 - **A web interface** — the asset tree, the order board with its state
   actions, and the audit trail as a timeline, served by the application
   itself at `/ui` with no build step (see
@@ -126,7 +133,7 @@ means. This README describes what the platform is and how it is built.
 - **OpenAPI docs** — interactive documentation at `/docs` when enabled.
 - **Migrated schema** — Alembic owns the database schema; the application
   refuses to start when the database is not at the head revision (see
-  [Database migrations](#database-migrations)).
+  [Migrations](docs/admin-guide/04-migrations.md)).
 
 ## What does not exist yet
 
@@ -141,8 +148,8 @@ means. This README describes what the platform is and how it is built.
   the admin role alone; an admin's own site grants scope their domain
   writes, not whom they can manage.
 - Cross-process rate limiting. The authentication throttle counts in
-  process memory; with several workers each process enforces its own
-  limit (see [Authentication rate limiting](#authentication-rate-limiting)).
+  process memory; with several workers each process enforces its own limit
+  (see [Rate limiting in production](docs/admin-guide/10-rate-limiting.md)).
   A shared store — or limits at the reverse proxy — is future work for
   multi-worker deployments.
 - Remote object storage. Evidence lives in a local directory behind a
@@ -153,9 +160,10 @@ means. This README describes what the platform is and how it is built.
   is append-only like the audit trail, and the database enforces that with
   triggers — so how a real deployment handles retention periods, legal
   holds, or data-protection erasure requests is an open decision
-  documented in [Evidence storage](#evidence-storage), not silently
-  ignored. Until that design exists, any operational deletion takes a
-  deliberate migration, on purpose.
+  documented in
+  [Retention and legal hold](docs/admin-guide/16-retention-and-legal-hold.md),
+  not silently ignored. Until that design exists, any operational deletion
+  takes a deliberate migration, on purpose.
 - Editing in the web interface. It reads every domain object and runs the
   maintenance-order transitions; creating assets, procedures, permits, or
   incidents still goes through the API.
@@ -164,10 +172,12 @@ means. This README describes what the platform is and how it is built.
 
 A small web interface ships with the application at `/ui` — plain HTML,
 CSS, and ES modules served by the same process, with no build step and no
-runtime dependency. Set `CFM_WEB_ENABLED=false` for deployments that want
-the API surface and nothing else. It authenticates with the same bearer
-token the API takes, entered once and kept in the browser's `localStorage`
-(which the page says out loud, next to the button that forgets it).
+runtime dependency. It can be switched off for deployments that want the API
+surface and nothing else (see
+[The web interface](docs/admin-guide/08-web-interface.md)). It authenticates
+with the same bearer token the API takes, entered once and kept in the
+browser's `localStorage` (which the page says out loud, next to the button
+that forgets it).
 
 Three views:
 
@@ -248,168 +258,11 @@ to a PostgreSQL URL to do the same locally), and loads the web pages in a
 headless browser (see [Web interface](#web-interface)); day-to-day local
 runs stay on SQLite for speed.
 
-## Configuration
+## Operating an installation
 
-Settings use the `CFM_` prefix (see `.env.example`):
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `CFM_DATABASE_URL` | `sqlite:///./cfm.db` | SQLAlchemy database URL |
-| `CFM_DB_AUTO_UPGRADE` | `false` | Run pending migrations at startup instead of refusing to start |
-| `CFM_DOCS_ENABLED` | `true` | Enable OpenAPI browser pages |
-| `CFM_CORS_ORIGINS` | localhost origins | JSON array of allowed web origins |
-| `CFM_AUTH_MAX_FAILURES` | `10` | Failed authentications per source before lockout; `0` disables the limiter |
-| `CFM_AUTH_FAILURE_WINDOW_SECONDS` | `60` | Sliding window within which failures accumulate |
-| `CFM_AUTH_LOCKOUT_SECONDS` | `300` | How long a locked source keeps receiving 429 |
-| `CFM_TRUSTED_PROXY` | `false` | Attribute failures to the final `X-Forwarded-For` entry appended by one trusted reverse proxy |
-| `CFM_EVIDENCE_DIR` | `./evidence` | Root directory of the content-addressed evidence store |
-| `CFM_EVIDENCE_MAX_MB` | `25` | Upper bound, in mebibytes, on one uploaded evidence file |
-
-For PostgreSQL, use a URL such as `postgresql+psycopg://cfm:cfm@db:5432/cfm`.
-
-## Authentication rate limiting
-
-Failed token authentications are throttled per network source: after
-`CFM_AUTH_MAX_FAILURES` failures within a sliding window of
-`CFM_AUTH_FAILURE_WINDOW_SECONDS`, the source is locked for
-`CFM_AUTH_LOCKOUT_SECONDS`, and every authenticated route answers it with
-`429` plus a `Retry-After` header — for valid and invalid tokens alike, and
-with one constant body, so a locked-out caller learns nothing about any
-token by probing further. Successful authentications are never counted and
-cost only a dictionary lookup; requests without credentials are rejected
-with `401` but do not count either, so unauthenticated scanning cannot lock
-out a NAT gateway shared with legitimate clients. Each lockout is reported
-once through the standard `logging` module. Failed attempts deliberately
-write nothing to the audit trail: that table is append-only domain history,
-and per-failure entries would let an unauthenticated attacker grow it
-without bound.
-
-The source is the peer address of the connection. `X-Forwarded-For` is
-ignored by default because any client can write that header. Set
-`CFM_TRUSTED_PROXY=true` only when exactly one reverse proxy you control
-sits directly in front of the app and appends the real client address as
-the final `X-Forwarded-For` entry (what nginx, traefik, and caddy do);
-then that final entry becomes the source, and earlier entries remain
-untrusted.
-
-Honest scope: the counters live in process memory. With a single process —
-the SQLite deployment story — the limits are exact. With several workers
-or replicas each process counts on its own, so the effective per-source
-limit is the configured one multiplied by the process count; that is still
-a hard cap, just not a shared one, and a shared-store limiter was
-deliberately not bought at the price of a database write per failure on
-the authentication path. What this defends against: online token guessing
-and noisy scanning from single sources — a locked source gets at most
-`CFM_AUTH_MAX_FAILURES` tries per lockout period instead of thousands per
-second. What it cannot defend against: offline attacks (only SHA-256
-hashes of the 256-bit secrets are stored, so there is nothing usable to
-steal in the first place) and attacks spread across many sources, which
-per-source accounting inherently only limits per source.
-
-## Evidence storage
-
-Evidence files live in a content-addressed object store under
-`CFM_EVIDENCE_DIR`: an object's path is the SHA-256 of its content beneath
-two levels of prefix directories (`objects/ab/cd/abcd…`). The hash is
-computed server-side while the upload streams in — the filename and content
-type a client declares are recorded as declarations, but the hash and size
-are measured, and they are what an audit can rely on. Content addressing
-makes the store write-once and deduplicating: identical bytes land on the
-same path exactly once, however many objects they evidence, and a stored
-hash is never rewritten. Uploads are flushed and fsynced before the
-database row referencing them commits, so a committed attachment never
-points at bytes that could still be lost; a crash between the two steps
-leaves at most an orphaned object that a retried upload reuses.
-
-Uploading is always an attach: the file arrives as `multipart/form-data`
-(field `file`, optional `note`) on the commissioning test, punch item,
-maintenance order, or work permit it evidences, is allowed only while that
-target can still change state, and is guarded by the same site-scope rules
-as any other write on the target. The attach is the auditable act — its
-audit entry records the actor, the scope, the SHA-256, the measured size,
-and the declaration made in that request. One evidence object may be
-attached to many targets (the bytes are stored once) but only once to any
-single target. Uploads are capped at `CFM_EVIDENCE_MAX_MB`; oversized
-files are rejected with `413` (`evidence.file_too_large`), and request
-bodies beyond the cap plus multipart framing are rejected before parsing
-can spool them to disk (`evidence.request_too_large`).
-
-Downloads re-hash the stored bytes and compare against the recorded
-SHA-256 before serving — verification happens up front, at the price of
-buffering at most one capped file in memory, because a stream can only
-detect corruption after wrong bytes have already been sent with a success
-status. A corrupted or missing object answers `500`
-(`evidence.corrupted`) instead of serving silently wrong evidence. Content
-is always served as an attachment with `X-Content-Type-Options: nosniff`,
-since the content type is a client declaration. Downloads are reads and
-stay installation-wide, like every other read in the API.
-
-There is no delete endpoint: evidence rows and objects are append-only,
-like the audit trail whose entries reference them — and since migration
-`0004` the database enforces that itself, with triggers that abort any
-UPDATE or DELETE against the audit and evidence tables whatever
-connection attempts it. Honest scope, twice over. First, storage is a
-local directory — right for the single-process deployment story, and the
-store's small interface (write / verified read) is the seam where an
-S3-compatible remote backend arrives later; the triggers guard the
-database rows, not the object files, whose write-once discipline the
-store enforces on its own. Second, retention is an open decision for a
-real deployment: retention periods, legal holds, and data-protection
-erasure requests will eventually require a deliberate deletion mechanism
-with its own audit story, and that design is documented future work
-rather than something this codebase pretends cannot happen. The triggers
-raise the cost of that future mechanism on purpose: operational deletion
-now requires a deliberate migration that drops the trigger, deletes, and
-recreates it — a visible, reviewable act in the migration history instead
-of a quiet `DELETE` someone runs against the database. That friction is
-the point.
-
-## Database migrations
-
-The schema is owned by [Alembic](https://alembic.sqlalchemy.org/); the
-application does not create tables at startup. At boot it compares the
-database's stamped revision against the newest migration and refuses to
-start when they differ, printing exactly what to run — so a deployment
-never serves a schema it does not understand. Setting
-`CFM_DB_AUTO_UPGRADE=true` makes the application run pending migrations
-itself at startup instead; that is convenient for a single process over
-SQLite, but with several processes or a shared PostgreSQL database prefer
-running the upgrade once as a deploy step.
-
-The migration environment reads the database URL from the same settings as
-the API (`CFM_DATABASE_URL`, `.env`, or the SQLite default), so `alembic`
-commands target whatever database the application would serve.
-
-- Fresh database: `alembic upgrade head`. The bootstrap and demo seed
-  scripts do this themselves when the database is empty, which is why the
-  quickstart above needs no separate migration step.
-- After deploying new code: `alembic upgrade head`.
-- A database created by a release that predates migrations (tables built by
-  `create_all` at startup, no `alembic_version` table): verify it matches
-  the current models, adopt it once with `alembic stamp 0001`, and use
-  `alembic upgrade head` from then on.
-- New migration during development: change the models, run
-  `alembic revision --autogenerate -m "describe the change"`, and review
-  the generated script — autogenerate is a starting point, not a guarantee.
-
-The test suite enforces that a freshly migrated database matches the
-models exactly and that autogenerate detects no drift at head, so a model
-change without a matching migration fails CI.
-
-One deliberate exception lives outside that comparison: migration `0004`
-installs `BEFORE UPDATE` / `BEFORE DELETE` triggers (plus `TRUNCATE` on
-PostgreSQL) on the append-only tables — `audit_entries`,
-`commissioning_evidence`, `evidence_attachments`, `evidence_objects` — so
-history cannot be rewritten by an application bug or a direct connection,
-whatever role it uses. A PostgreSQL superuser, or a later migration, can
-still drop a trigger; the protection is against silent mutation, not
-against deliberate schema changes, which stay visible in the migration
-history. Triggers are not part of the SQLAlchemy metadata, so the drift
-checks above are blind to them by construction; dedicated tests assert
-instead that the triggers exist at head and abort direct UPDATE and
-DELETE statements on every protected table, which also catches a future
-migration rebuilding one of these tables (SQLite batch mode discards
-triggers with the old table) without recreating them.
+Installing, configuring, migrating, securing, backing up, restoring, and
+upgrading a deployment are covered chapter by chapter in the
+[Administrator and Deployment Guide](docs/admin-guide/README.md).
 
 ## Demo dataset
 
@@ -555,7 +408,7 @@ reveal whether a token exists, is revoked, or has expired. A source that
 keeps failing authentication receives `429` with `auth.rate_limited`, a
 `Retry-After` header, and a body that is identical whatever token was
 presented (see
-[Authentication rate limiting](#authentication-rate-limiting)). Role
+[Rate limiting in production](docs/admin-guide/10-rate-limiting.md)). Role
 failures return `403` with `auth.forbidden`; a write whose target site no
 grant covers returns `403` with `auth.scope_forbidden`.
 
