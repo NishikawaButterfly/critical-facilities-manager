@@ -147,9 +147,10 @@ before any download is served.
 **Site** — The top of the location hierarchy, and the unit of write authority.
 Every asset belongs to exactly one, derived from its location.
 
-**Site grant** — A row saying where one user may write: one site and everything
-under it, or the whole installation. Reads are never scoped. See
-[Roles and permissions](03-roles-and-permissions.md#site-grants-where-you-may-write).
+**Site grant** — A row saying where one user's authority applies: one site and
+everything under it, or the whole installation. It scopes reads as well as
+writes — records outside it answer 404, as if they did not exist. See
+[Roles and permissions](03-roles-and-permissions.md#site-grants-where-your-authority-applies).
 
 **SOP** — Standard Operating Procedure. One of the three
 *procedure* kinds.

@@ -77,9 +77,10 @@ There is no way to delegate "administer only this site". Treat every admin
 token as a key to the whole installation, keep the number of admins small, and
 give engineers the engineer role even when they are senior.
 
-Reads are installation-wide for **every** authenticated user, including
-viewers: site grants scope writes only. If a user should not see a site's
-records, they cannot have a token at all in this release.
+Domain **reads** are scoped, though: an admin reads the sites their own grants
+cover and no others, exactly like anybody else. An administrator who needs to
+see the whole estate holds an installation-wide grant — the default for a new
+account — and one who should not see a client's site simply is not granted it.
 
 ## 5. Close the documentation endpoints
 
@@ -171,8 +172,11 @@ should touch it.
 State it to whoever is accepting the risk:
 
 - No password login, MFA, or SSO. Tokens are the whole story.
-- No site-scoped reads: every authenticated user reads the entire installation.
-- No site-scoped administration.
+- No site-scoped administration: any admin manages users, tokens, and grants
+  anywhere, whatever their own grants cover.
+- An engineer or admin can still confirm that an out-of-scope id exists by
+  attempting a write on it (403 rather than 404); reads disclose nothing, and a
+  viewer token never reaches the distinction.
 - No encryption at rest for evidence, and no integrity protection for the
   database beyond the append-only triggers.
 - No shared rate limiting across processes.

@@ -104,7 +104,11 @@ The refusals:
 
 **Permission:** an **installation-wide** grant, always. A constraint may span
 sites, so it belongs to none of them. A site-scoped engineer cannot create or
-retire constraints.
+retire constraints — but reads every one of them, because a constraint is what
+refuses their work and they have to be able to look it up. The membership is
+the part that is site-owned: `asset_ids` lists only the members on sites your
+grants cover, and filtering the list by an asset you cannot read matches
+nothing. A cross-site constraint therefore shows each side its own members.
 
 **Members cannot be added or removed afterwards.** A constraint is created and
 retired, never edited — not its name, not its description, not its membership.

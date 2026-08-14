@@ -45,17 +45,28 @@ describes what the platform is and how it is built.
   separation-of-duties rules (approver ≠ author, issuer ≠ requester,
   witness ≠ executor, verifier ≠ starter) compare authenticated
   identities, not header values.
-- **Site-scoped write authority** — a user's role says *what* they may do;
-  their site grants say *where*. A grant covers one site's whole subtree, or
-  the whole installation (`site_id` null) — the default for new users, and
-  what every user existing before migration `0002` was carried to, so
-  behavior did not change for existing tokens. Domain writes resolve the
-  target's owning site (an order follows its asset, a permit its order, a
-  punch item its asset or location) and require a covering grant. Objects
-  that belong to no single site — procedures, constraints, creating or
-  deleting a site itself — require an installation-wide grant, and moving an
-  asset across sites requires authority over both. Every audit entry records
-  the scope that covered the write (`installation` or `site:<id>`).
+- **Site-scoped authority, on reads as well as writes** — a user's role says
+  *what* they may do; their site grants say *where*. A grant covers one site's
+  whole subtree, or the whole installation (`site_id` null) — the default for
+  new users, and what every user existing before migration `0002` was carried
+  to, so behavior did not change for existing tokens. Every domain object
+  resolves to its owning site (an order follows its asset, a permit its order,
+  a punch item its asset or location, evidence whatever it is attached to): a
+  write requires a covering grant, and a read is filtered to covered rows
+  inside the query, so listings, their `total`, and direct fetches by id all
+  stop at the grant boundary. An object outside it answers the same 404 a
+  missing object answers — an id that exists out of scope is not
+  distinguishable from one that never existed. No role bypasses this,
+  `admin` included; installation-wide access is an installation-wide grant.
+  Objects that belong to no single site — procedures, constraints, creating or
+  deleting a site itself — require an installation-wide grant to write, stay
+  readable to any authenticated user because the site-scoped work refers to
+  them, and expose their site-owned parts (a constraint's member assets) only
+  where grants cover them. Moving an asset across sites requires authority over
+  both. Every audit entry records the scope that covered the write
+  (`installation` or `site:<id>`), and that stored label is what filters the
+  trail on the way out, so history is never reinterpreted from an entity's
+  current site.
 - **Location hierarchy** — site → building → floor → room. The adjacency rule
   is enforced: each kind must hang from exactly the kind above it (a room
   cannot be attached directly to a building). Codes are unique among siblings.
@@ -144,13 +155,11 @@ describes what the platform is and how it is built.
 - Sessions and password login. Both the API and the web interface
   authenticate with bearer tokens; there is no session cookie, no password,
   and no SSO.
-- Site-scoped reads. Site grants scope writes only; every authenticated
-  user still reads everything, installation-wide. A commissioning witness
-  is also only a validated reference — the scope check applies to the
-  executor recording the result, not to the named witness.
 - Site-scoped administration. User, token, and grant management is gated by
-  the admin role alone; an admin's own site grants scope their domain
-  writes, not whom they can manage.
+  the admin role alone; an admin's own site grants scope their domain reads
+  and writes, not whom they can manage.
+- A commissioning witness beyond a validated reference — the scope check
+  applies to the executor recording the result, not to the named witness.
 - Cross-process rate limiting. The authentication throttle counts in
   process memory; with several workers each process enforces its own limit
   (see [Rate limiting in production](docs/admin-guide/10-rate-limiting.md)).
@@ -299,12 +308,14 @@ already contains locations or users.
 All routes live under `/api/v1`. Except `/health`, every request must send
 `Authorization: Bearer <token>`. Any authenticated user may issue GET
 requests; everything else requires the engineer or admin role, and the
-`/users` rows below require admin outright. Domain writes additionally
-require a site grant covering the target's site — an installation-wide
-grant for procedures, constraints, and sites themselves (see the
-site-scoped write authority bullet above). List endpoints return
+`/users` rows below require admin outright. Site grants then decide where
+that authority reaches: a domain write requires a grant covering the
+target's site — an installation-wide grant for procedures, constraints, and
+sites themselves — and a domain read returns, counts, and fetches only what
+those grants cover, answering 404 for anything else (see the site-scoped
+authority bullet above). List endpoints return
 `{items, total, limit, offset}` and accept `limit` and `offset` query
-parameters.
+parameters; `total` counts the rows the caller may read.
 
 | Method | Path | Purpose |
 | --- | --- | --- |

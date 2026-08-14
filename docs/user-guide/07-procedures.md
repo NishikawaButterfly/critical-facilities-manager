@@ -166,10 +166,12 @@ $ curl -X PATCH -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
  "detail":"A procedure can only be edited while draft; this one is 'approved'. Start a new version to change an approved procedure."}
 ```
 
-**Permission:** every procedure operation — create, edit, approve, retire, new
+**Permission:** every procedure *write* — create, edit, approve, retire, new
 version — requires an **installation-wide** grant, because a procedure belongs
-to no single site. A site-scoped engineer cannot touch procedures at all. See
-[Roles and permissions](03-roles-and-permissions.md#site-grants-where-you-may-write).
+to no single site. A site-scoped engineer cannot touch procedures at all, but
+reads them all: a procedure belongs to no site, so no site grant withholds it,
+and the crew working under one has to be able to read it. See
+[Roles and permissions](03-roles-and-permissions.md#site-grants-where-your-authority-applies).
 
 ## Where procedures are used
 

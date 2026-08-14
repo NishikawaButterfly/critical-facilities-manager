@@ -156,8 +156,12 @@ Returns a plain list — not a paged envelope — of attachments in the order th
 were made, each with its full `evidence_object`. The same endpoint pattern works
 for permits, commissioning tests, and punch items.
 
-Reading is not site-scoped: anyone with any valid token can list and download
-any evidence anywhere in the installation.
+Reading follows the record the evidence hangs off. Listing the attachments of
+an order on a site you hold no grant for answers `404` — the same answer a
+missing order gets — and so do the metadata and the content of the object
+behind it. An evidence object attached to several records is readable as soon
+as **one** of them is a record you may read, which is what keeps deduplicated
+bytes usable to everyone entitled to them.
 
 ## Downloading and verifying
 
@@ -249,7 +253,11 @@ Every attachment writes an audit entry against the record it evidences:
 ```
 
 `content_already_stored` says whether these bytes were already in the store —
-`true` means this upload deduplicated onto content that arrived earlier.
+`true` means this upload deduplicated onto content that arrived earlier. One
+consequence is worth stating: the object's `filename` and `uploaded_by` are the
+declaration made by whoever uploaded the bytes *first*, which on a
+multi-site installation may be somebody on a site you cannot read. Your own
+attachment's audit entry records the declaration your request made.
 
 Because the hash is in the audit trail, and the audit trail cannot be altered,
 the link between "this record" and "these exact bytes" is fixed at the moment of
