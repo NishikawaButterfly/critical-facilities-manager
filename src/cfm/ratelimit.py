@@ -15,6 +15,10 @@ a single source. What it does not defend against: offline attacks (no
 secret material leaves the server anyway) and attacks distributed over
 many sources, which per-source accounting cannot see.
 
+Which address counts as the source is decided in :func:`client_source`,
+and it is the part an attacker gets a say in: see its docstring for what
+happens to requests that carry a forwarded header nobody vouched for.
+
 Memory stays bounded: once more than ``sweep_threshold`` sources are
 tracked, recording a failure first drops every source that is neither
 locked nor recently failing.
@@ -35,24 +39,46 @@ logger = logging.getLogger(__name__)
 
 UNKNOWN_SOURCE = "unknown"
 
+# The single bucket every request carrying an unvouched-for forwarded
+# header counts into. Not a valid host: no peer can collide with it.
+UNTRUSTED_FORWARDED_SOURCE = "untrusted-forwarded"
+
 DEFAULT_SWEEP_THRESHOLD = 1024
 
 
 def client_source(request: Request, *, trusted_proxy: bool) -> str:
     """The network source an authentication attempt is attributed to.
 
-    By default this is the peer address of the transport connection. The
-    ``X-Forwarded-For`` header is client-writable and therefore ignored
-    unless ``trusted_proxy`` states that a reverse proxy the operator
-    controls sits directly in front of the application and appends the real
-    client address as the final entry (what nginx, traefik, and caddy do).
-    Only that final entry is trusted; earlier entries arrived from the
-    outside and remain attacker-controlled.
+    With ``trusted_proxy``, the operator states that a reverse proxy they
+    control sits directly in front of the application and appends the real
+    client address as the final ``X-Forwarded-For`` entry (what nginx,
+    traefik, and caddy do). Only that final entry is used; earlier entries
+    arrived from the outside and remain attacker-controlled.
+
+    Without it, the header is worth nothing — and the application cannot
+    fall back to the connection's peer address, because it may no longer
+    have one: uvicorn enables proxy-header handling by default (trusting
+    ``127.0.0.1``) and replaces the client address with an entry from the
+    header before any application code runs. The address such a request
+    reports is therefore attacker-controlled as far as this function can
+    tell, and it must not partition the counters, or rotating the header
+    would buy a fresh failure budget per invented value. Every request
+    carrying the header shares :data:`UNTRUSTED_FORWARDED_SOURCE` instead,
+    so those attempts accumulate against one counter and lock out
+    together. The cost is that clients of a real proxy the operator never
+    declared share that one bucket and can lock each other out; the fix
+    for that is to declare the proxy (see :class:`cfm.config.Settings`) or
+    to stop uvicorn from rewriting the address.
+
+    Requests with no forwarded header keep being attributed to the address
+    the application is given, which is the peer address whenever nothing
+    upstream substituted one.
     """
-    if trusted_proxy:
-        forwarded = ",".join(request.headers.getlist("x-forwarded-for"))
-        if forwarded.strip():
+    forwarded = ",".join(request.headers.getlist("x-forwarded-for")).strip()
+    if forwarded:
+        if trusted_proxy:
             return forwarded.rsplit(",", 1)[-1].strip()
+        return UNTRUSTED_FORWARDED_SOURCE
     if request.client is not None:
         return request.client.host
     return UNKNOWN_SOURCE
