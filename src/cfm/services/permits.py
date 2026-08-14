@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.orm import Session
 
 from ..audit import record_audit
@@ -36,13 +37,29 @@ def permit_snapshot(permit: WorkPermit) -> dict[str, Any]:
     }
 
 
+def _not_found(permit_id: str) -> NotFoundError:
+    return NotFoundError(
+        f"Work permit {permit_id} was not found.",
+        error_code="work_permit.not_found",
+    )
+
+
 def get_permit(session: Session, permit_id: str) -> WorkPermit:
     permit = session.get(WorkPermit, permit_id)
     if permit is None:
-        raise NotFoundError(
-            f"Work permit {permit_id} was not found.",
-            error_code="work_permit.not_found",
-        )
+        raise _not_found(permit_id)
+    return permit
+
+
+def read_permit(session: Session, permit_id: str, readable: ColumnElement[bool]) -> WorkPermit:
+    """The permit addressed by ``permit_id``, if this request may read it.
+
+    A permit on a site the caller holds no grant for answers exactly what a
+    missing one answers.
+    """
+    permit = session.scalar(select(WorkPermit).where(WorkPermit.id == permit_id, readable))
+    if permit is None:
+        raise _not_found(permit_id)
     return permit
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session, aliased
 
 from ..audit import jsonable, record_audit
@@ -38,13 +38,31 @@ def order_snapshot(order: MaintenanceOrder) -> dict[str, Any]:
     }
 
 
+def _not_found(order_id: str) -> NotFoundError:
+    return NotFoundError(
+        f"Maintenance order {order_id} was not found.",
+        error_code="maintenance_order.not_found",
+    )
+
+
 def get_order(session: Session, order_id: str) -> MaintenanceOrder:
     order = session.get(MaintenanceOrder, order_id)
     if order is None:
-        raise NotFoundError(
-            f"Maintenance order {order_id} was not found.",
-            error_code="maintenance_order.not_found",
-        )
+        raise _not_found(order_id)
+    return order
+
+
+def read_order(session: Session, order_id: str, readable: ColumnElement[bool]) -> MaintenanceOrder:
+    """The order addressed by ``order_id``, if this request may read it.
+
+    An order on a site the caller holds no grant for answers exactly what a
+    missing one answers.
+    """
+    order = session.scalar(
+        select(MaintenanceOrder).where(MaintenanceOrder.id == order_id, readable)
+    )
+    if order is None:
+        raise _not_found(order_id)
     return order
 
 

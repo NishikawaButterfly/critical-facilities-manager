@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.orm import Session
 
 from ..audit import record_audit
@@ -38,13 +39,29 @@ def incident_snapshot(incident: Incident) -> dict[str, Any]:
     }
 
 
+def _not_found(incident_id: str) -> NotFoundError:
+    return NotFoundError(
+        f"Incident {incident_id} was not found.",
+        error_code="incident.not_found",
+    )
+
+
 def get_incident(session: Session, incident_id: str) -> Incident:
     incident = session.get(Incident, incident_id)
     if incident is None:
-        raise NotFoundError(
-            f"Incident {incident_id} was not found.",
-            error_code="incident.not_found",
-        )
+        raise _not_found(incident_id)
+    return incident
+
+
+def read_incident(session: Session, incident_id: str, readable: ColumnElement[bool]) -> Incident:
+    """The incident addressed by ``incident_id``, if this request may read it.
+
+    An incident on a site the caller holds no grant for answers exactly
+    what a missing one answers.
+    """
+    incident = session.scalar(select(Incident).where(Incident.id == incident_id, readable))
+    if incident is None:
+        raise _not_found(incident_id)
     return incident
 
 

@@ -270,7 +270,7 @@ async def test_a_viewer_cannot_attach_evidence(client: AsyncClient) -> None:
     assert response.json()["error_code"] == "auth.forbidden"
 
 
-async def test_attaching_follows_site_scope_and_reading_does_not(client: AsyncClient) -> None:
+async def test_attaching_and_reading_both_follow_the_site_scope(client: AsyncClient) -> None:
     site_a = await create_hierarchy(client, "A")
     site_b = await create_hierarchy(client, "B")
     asset_b = await create_asset(client, site_b["room"]["id"], tag="UPS-B-01")
@@ -285,9 +285,9 @@ async def test_attaching_follows_site_scope_and_reading_does_not(client: AsyncCl
     assert forbidden.status_code == 403
     assert forbidden.json()["error_code"] == "auth.scope_forbidden"
 
-    # Attached by a user with authority on site B, the evidence is still
-    # readable installation-wide: downloads are reads, and reads are not
-    # site-scoped anywhere in this API.
+    # Attached by a user with authority on site B, the evidence follows the
+    # test it evidences: the site-A engineer cannot list it, read its
+    # metadata, or download it, and learns nothing about it either way.
     attached = await upload_evidence(
         client, f"/api/v1/commissioning-tests/{test_b['id']}/evidence-files"
     )
@@ -297,7 +297,18 @@ async def test_attaching_follows_site_scope_and_reading_does_not(client: AsyncCl
     attach_entry = next(entry for entry in entries if entry["action"] == "evidence_attached")
     assert attach_entry["scope"] == "installation"
 
-    readable = await client.get(f"/api/v1/evidence-objects/{object_id}/content", headers=eng_a)
+    listed = await client.get(
+        f"/api/v1/commissioning-tests/{test_b['id']}/evidence-files", headers=eng_a
+    )
+    assert listed.status_code == 404
+    metadata = await client.get(f"/api/v1/evidence-objects/{object_id}", headers=eng_a)
+    assert metadata.status_code == 404
+    assert metadata.json()["error_code"] == "evidence.not_found"
+    hidden = await client.get(f"/api/v1/evidence-objects/{object_id}/content", headers=eng_a)
+    assert hidden.status_code == 404
+
+    # An installation-wide reader downloads the same object as before.
+    readable = await client.get(f"/api/v1/evidence-objects/{object_id}/content")
     assert readable.status_code == 200
     assert readable.content == CONTENT
 

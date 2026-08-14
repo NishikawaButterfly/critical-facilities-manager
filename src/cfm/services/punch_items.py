@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.orm import Session
 
 from ..audit import record_audit
@@ -37,13 +38,31 @@ def punch_item_snapshot(item: PunchItem) -> dict[str, Any]:
     }
 
 
+def _not_found(punch_item_id: str) -> NotFoundError:
+    return NotFoundError(
+        f"Punch item {punch_item_id} was not found.",
+        error_code="punch_item.not_found",
+    )
+
+
 def get_punch_item(session: Session, punch_item_id: str) -> PunchItem:
     item = session.get(PunchItem, punch_item_id)
     if item is None:
-        raise NotFoundError(
-            f"Punch item {punch_item_id} was not found.",
-            error_code="punch_item.not_found",
-        )
+        raise _not_found(punch_item_id)
+    return item
+
+
+def read_punch_item(
+    session: Session, punch_item_id: str, readable: ColumnElement[bool]
+) -> PunchItem:
+    """The punch item addressed by ``punch_item_id``, if this request may read it.
+
+    An item on a site the caller holds no grant for — through its asset or
+    through its location — answers exactly what a missing one answers.
+    """
+    item = session.scalar(select(PunchItem).where(PunchItem.id == punch_item_id, readable))
+    if item is None:
+        raise _not_found(punch_item_id)
     return item
 
 

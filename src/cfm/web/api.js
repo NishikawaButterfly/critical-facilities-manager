@@ -209,7 +209,7 @@ export function describeError(error) {
         : "Refused (403): this token's role may not do that",
       hint: scoped
         ? "The token authenticated fine, but its write authority does not reach this record's site. Site grants are only readable with an admin token, so this page cannot know in advance which sites a token covers - it finds out by asking."
-        : "The token authenticated fine. Writing needs the engineer or admin role; a viewer token may read everything and change nothing.",
+        : "The token authenticated fine. Writing needs the engineer or admin role; a viewer token reads what its site grants cover and changes nothing.",
     };
   }
   if (error.status === 429) {

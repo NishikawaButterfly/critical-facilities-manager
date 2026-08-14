@@ -24,6 +24,7 @@ from ..services.commissioning import (
     create_punch_item_from_test,
     create_test,
     get_test,
+    read_test,
     record_result,
 )
 from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
@@ -55,11 +56,13 @@ def create_test_endpoint(
 def list_tests(
     session: SessionDep,
     page: PageDep,
+    access: SiteAccessDep,
     asset_id: Annotated[str | None, Query()] = None,
     status: Annotated[CommissioningTestStatus | None, Query()] = None,
 ) -> Page[CommissioningTestResponse]:
-    query = select(CommissioningTest)
-    count_query = select(func.count()).select_from(CommissioningTest)
+    readable = access.readable(CommissioningTest)
+    query = select(CommissioningTest).where(readable)
+    count_query = select(func.count()).select_from(CommissioningTest).where(readable)
     if asset_id is not None:
         query = query.where(CommissioningTest.asset_id == asset_id)
         count_query = count_query.where(CommissioningTest.asset_id == asset_id)
@@ -81,8 +84,12 @@ def list_tests(
 
 
 @router.get("/{test_id}", response_model=CommissioningTestResponse)
-def get_test_endpoint(test_id: str, session: SessionDep) -> CommissioningTestResponse:
-    return commissioning_test_response(get_test(session, test_id))
+def get_test_endpoint(
+    test_id: str, session: SessionDep, access: SiteAccessDep
+) -> CommissioningTestResponse:
+    return commissioning_test_response(
+        read_test(session, test_id, access.readable(CommissioningTest))
+    )
 
 
 @router.post("/{test_id}/evidence", response_model=CommissioningTestResponse, status_code=201)

@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any
 
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.orm import Session
 
 from ..audit import record_audit
@@ -44,13 +45,31 @@ def test_snapshot(test: CommissioningTest) -> dict[str, Any]:
     }
 
 
+def _not_found(test_id: str) -> NotFoundError:
+    return NotFoundError(
+        f"Commissioning test {test_id} was not found.",
+        error_code="commissioning_test.not_found",
+    )
+
+
 def get_test(session: Session, test_id: str) -> CommissioningTest:
     test = session.get(CommissioningTest, test_id)
     if test is None:
-        raise NotFoundError(
-            f"Commissioning test {test_id} was not found.",
-            error_code="commissioning_test.not_found",
-        )
+        raise _not_found(test_id)
+    return test
+
+
+def read_test(session: Session, test_id: str, readable: ColumnElement[bool]) -> CommissioningTest:
+    """The test addressed by ``test_id``, if this request may read it.
+
+    A test on a site the caller holds no grant for answers exactly what a
+    missing one answers.
+    """
+    test = session.scalar(
+        select(CommissioningTest).where(CommissioningTest.id == test_id, readable)
+    )
+    if test is None:
+        raise _not_found(test_id)
     return test
 
 

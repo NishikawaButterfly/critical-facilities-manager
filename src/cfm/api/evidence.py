@@ -3,8 +3,11 @@
 Uploading is always an attach: the file arrives as multipart form data on
 the domain object it evidences, the site-scope check guards it exactly
 like any other write on that target, and the audit entry carries the
-content hash. Downloads are reads and stay installation-wide, consistent
-with every other read in this API; the bytes are re-verified against the
+content hash. Reads follow the scope of that target too, all the way
+down: a listing answers only for a record the caller may read, and object
+metadata and content answer only while at least one of the object's
+attachments hangs off a record the caller may read — so evidence is not a
+side door into another site's work. The bytes are re-verified against the
 recorded hash before they are served, always with an attachment
 disposition and ``nosniff`` because the content type is a client
 declaration. There is no delete endpoint anywhere below: evidence is
@@ -22,18 +25,19 @@ from sqlalchemy.orm import Session
 from ..authz import site_of_asset_id, site_of_order_id, site_of_punch_item
 from ..config import Settings
 from ..evidence import EvidenceStore
+from ..models import CommissioningTest, EvidenceObject, MaintenanceOrder, PunchItem, WorkPermit
 from ..schemas import EvidenceAttachmentResponse, EvidenceObjectResponse
-from ..services.commissioning import get_test
+from ..services.commissioning import get_test, read_test
 from ..services.evidence import (
     AttachTarget,
     attachments_for,
-    get_evidence_object,
+    read_evidence_object,
     store_and_attach,
     verified_content,
 )
-from ..services.maintenance import get_order
-from ..services.permits import get_permit
-from ..services.punch_items import get_punch_item
+from ..services.maintenance import get_order, read_order
+from ..services.permits import get_permit, read_permit
+from ..services.punch_items import get_punch_item, read_punch_item
 from .deps import (
     ActorDep,
     EvidenceStoreDep,
@@ -104,9 +108,9 @@ def attach_to_commissioning_test(
     response_model=list[EvidenceAttachmentResponse],
 )
 def list_commissioning_test_evidence(
-    test_id: str, session: SessionDep
+    test_id: str, session: SessionDep, access: SiteAccessDep
 ) -> list[EvidenceAttachmentResponse]:
-    test = get_test(session, test_id)
+    test = read_test(session, test_id, access.readable(CommissioningTest))
     return [evidence_attachment_response(item) for item in attachments_for(session, test)]
 
 
@@ -138,9 +142,9 @@ def attach_to_punch_item(
     response_model=list[EvidenceAttachmentResponse],
 )
 def list_punch_item_evidence(
-    punch_item_id: str, session: SessionDep
+    punch_item_id: str, session: SessionDep, access: SiteAccessDep
 ) -> list[EvidenceAttachmentResponse]:
-    item = get_punch_item(session, punch_item_id)
+    item = read_punch_item(session, punch_item_id, access.readable(PunchItem))
     return [evidence_attachment_response(entry) for entry in attachments_for(session, item)]
 
 
@@ -171,8 +175,10 @@ def attach_to_order(
     "/maintenance-orders/{order_id}/evidence-files",
     response_model=list[EvidenceAttachmentResponse],
 )
-def list_order_evidence(order_id: str, session: SessionDep) -> list[EvidenceAttachmentResponse]:
-    order = get_order(session, order_id)
+def list_order_evidence(
+    order_id: str, session: SessionDep, access: SiteAccessDep
+) -> list[EvidenceAttachmentResponse]:
+    order = read_order(session, order_id, access.readable(MaintenanceOrder))
     return [evidence_attachment_response(entry) for entry in attachments_for(session, order)]
 
 
@@ -203,14 +209,20 @@ def attach_to_permit(
     "/work-permits/{permit_id}/evidence-files",
     response_model=list[EvidenceAttachmentResponse],
 )
-def list_permit_evidence(permit_id: str, session: SessionDep) -> list[EvidenceAttachmentResponse]:
-    permit = get_permit(session, permit_id)
+def list_permit_evidence(
+    permit_id: str, session: SessionDep, access: SiteAccessDep
+) -> list[EvidenceAttachmentResponse]:
+    permit = read_permit(session, permit_id, access.readable(WorkPermit))
     return [evidence_attachment_response(entry) for entry in attachments_for(session, permit)]
 
 
 @router.get("/evidence-objects/{object_id}", response_model=EvidenceObjectResponse)
-def get_evidence_object_endpoint(object_id: str, session: SessionDep) -> EvidenceObjectResponse:
-    return evidence_object_response(get_evidence_object(session, object_id))
+def get_evidence_object_endpoint(
+    object_id: str, session: SessionDep, access: SiteAccessDep
+) -> EvidenceObjectResponse:
+    return evidence_object_response(
+        read_evidence_object(session, object_id, access.readable(EvidenceObject))
+    )
 
 
 def _content_disposition(filename: str) -> str:
@@ -230,7 +242,7 @@ def _content_disposition(filename: str) -> str:
 
 @router.get("/evidence-objects/{object_id}/content", response_class=Response)
 def download_evidence_object(
-    object_id: str, session: SessionDep, store: EvidenceStoreDep
+    object_id: str, session: SessionDep, access: SiteAccessDep, store: EvidenceStoreDep
 ) -> Response:
     """The stored bytes, re-verified against the recorded SHA-256 first.
 
@@ -238,7 +250,7 @@ def download_evidence_object(
     wrong bytes. Content is always served as an attachment with
     ``nosniff`` because the content type is a client declaration.
     """
-    evidence_object = get_evidence_object(session, object_id)
+    evidence_object = read_evidence_object(session, object_id, access.readable(EvidenceObject))
     content = verified_content(store, evidence_object)
     return Response(
         content=content,

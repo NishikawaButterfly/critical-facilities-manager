@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session
 
 from ..audit import record_audit
@@ -29,10 +29,27 @@ def asset_snapshot(asset: Asset) -> dict[str, Any]:
     }
 
 
+def _not_found(asset_id: str) -> NotFoundError:
+    return NotFoundError(f"Asset {asset_id} was not found.", error_code="asset.not_found")
+
+
 def get_asset(session: Session, asset_id: str) -> Asset:
     asset = session.get(Asset, asset_id)
     if asset is None:
-        raise NotFoundError(f"Asset {asset_id} was not found.", error_code="asset.not_found")
+        raise _not_found(asset_id)
+    return asset
+
+
+def read_asset(session: Session, asset_id: str, readable: ColumnElement[bool]) -> Asset:
+    """The asset addressed by ``asset_id``, if this request may read it.
+
+    An asset outside the caller's grants answers exactly what a missing one
+    answers, down to the message: the existence of another site's asset is
+    itself information the caller has no grant for.
+    """
+    asset = session.scalar(select(Asset).where(Asset.id == asset_id, readable))
+    if asset is None:
+        raise _not_found(asset_id)
     return asset
 
 

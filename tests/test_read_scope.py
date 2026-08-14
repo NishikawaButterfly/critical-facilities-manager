@@ -417,6 +417,66 @@ async def test_installation_scoped_objects_stay_readable(client: AsyncClient) ->
     assert sorted(whole.json()["asset_ids"]) == sorted([asset_a["id"], asset_b["id"]])
 
 
+async def test_only_a_write_attempt_still_distinguishes_an_out_of_scope_id(
+    client: AsyncClient,
+) -> None:
+    """The documented edge of the scope, pinned so it cannot widen unnoticed."""
+    site_a = await create_hierarchy(client, "A")
+    site_b = await populate_site(client, "B")
+    _, eng_a = await create_scoped_user(client, "probing-eng", site_ids=[site_a["site"]["id"]])
+    _, viewer_a = await create_scoped_user(
+        client, "probing-viewer", role="viewer", site_ids=[site_a["site"]["id"]]
+    )
+    unknown = str(uuid4())
+    rename = {"name": "Renamed"}
+
+    # An engineer's write refusal names the site, which confirms the asset.
+    real = await client.patch(f"/api/v1/assets/{site_b['asset']['id']}", json=rename, headers=eng_a)
+    assert real.status_code == 403
+    assert real.json()["error_code"] == "auth.scope_forbidden"
+    invented = await client.patch(f"/api/v1/assets/{unknown}", json=rename, headers=eng_a)
+    assert invented.status_code == 404
+
+    # A viewer never reaches that check: the role gate answers first, the same
+    # way for a real id and an invented one.
+    refusals = []
+    for identifier in (site_b["asset"]["id"], unknown):
+        refused = await client.patch(f"/api/v1/assets/{identifier}", json=rename, headers=viewer_a)
+        assert refused.status_code == 403
+        assert refused.json()["error_code"] == "auth.forbidden"
+        refusals.append(without_identifier(refused.json(), identifier))
+    assert refusals[0] == refusals[1]
+
+
+async def test_a_write_against_an_unknown_id_still_answers_404(client: AsyncClient) -> None:
+    """The write path loads its target the way it always did."""
+    unknown = str(uuid4())
+    writes = (
+        (f"/api/v1/locations/{unknown}", {"name": "Renamed"}, "location.not_found"),
+        (f"/api/v1/assets/{unknown}", {"name": "Renamed"}, "asset.not_found"),
+        (
+            f"/api/v1/maintenance-orders/{unknown}",
+            {"title": "Renamed"},
+            "maintenance_order.not_found",
+        ),
+    )
+    for path, body, error_code in writes:
+        missing = await client.patch(path, json=body, headers=ACTOR)
+        assert missing.status_code == 404, path
+        assert missing.json()["error_code"] == error_code
+
+    transitions = (
+        (f"/api/v1/work-permits/{unknown}/issue", "work_permit.not_found"),
+        (f"/api/v1/incidents/{unknown}/start-investigation", "incident.not_found"),
+        (f"/api/v1/commissioning-tests/{unknown}/evidence", "commissioning_test.not_found"),
+        (f"/api/v1/punch-items/{unknown}/start", "punch_item.not_found"),
+    )
+    for path, error_code in transitions:
+        missing = await client.post(path, json={"note": "x"}, headers=ACTOR)
+        assert missing.status_code == 404, path
+        assert missing.json()["error_code"] == error_code
+
+
 async def test_scoped_reads_leave_write_authorization_unchanged(client: AsyncClient) -> None:
     site_a = await create_hierarchy(client, "A")
     site_b = await populate_site(client, "B")
@@ -440,3 +500,9 @@ async def test_scoped_reads_leave_write_authorization_unchanged(client: AsyncCli
         headers=eng_a,
     )
     assert allowed.status_code == 201, allowed.text
+
+    # A punch item scoped to a location, not an asset, resolves its site
+    # through the location — on the write path as much as on the read one.
+    punch_item = await create_punch_item(client, location_id=site_a["room"]["id"])
+    started = await client.post(f"/api/v1/punch-items/{punch_item['id']}/start", headers=eng_a)
+    assert started.status_code == 200, started.text

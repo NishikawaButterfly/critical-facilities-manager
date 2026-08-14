@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from typing import BinaryIO
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.orm import Session
 
 from ..audit import record_audit
@@ -115,8 +115,20 @@ def _capped_chunks(
         chunk = stream.read(UPLOAD_CHUNK_BYTES)
 
 
-def get_evidence_object(session: Session, object_id: str) -> EvidenceObject:
-    evidence_object = session.get(EvidenceObject, object_id)
+def read_evidence_object(
+    session: Session, object_id: str, readable: ColumnElement[bool]
+) -> EvidenceObject:
+    """The stored object addressed by ``object_id``, if this request may read it.
+
+    An evidence object is readable through the domain objects it evidences:
+    the same bytes may hang off several targets, and one attachment the
+    caller's grants cover is enough. An object with no such attachment
+    answers exactly what a missing one answers, so evidence cannot become a
+    way around the scope of the record it belongs to.
+    """
+    evidence_object = session.scalar(
+        select(EvidenceObject).where(EvidenceObject.id == object_id, readable)
+    )
     if evidence_object is None:
         raise NotFoundError(
             f"Evidence object {object_id} was not found.",
