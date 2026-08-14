@@ -153,9 +153,11 @@ Locked authentication source 127.0.0.1 for 10 seconds after 3 failures within 60
 **Fix.** Find what is retrying a dead token — a script, a scheduled job, a
 browser tab with a revoked token — and stop it. Wait out `Retry-After`. If the
 logged source is `127.0.0.1` for everybody, the application is behind a proxy
-and attributing every request to it; if it is an address that keeps changing,
-`X-Forwarded-For` is being trusted when it should not be. Both are
-[Running behind a reverse proxy](09-reverse-proxy.md).
+and attributing every request to it; if it is `untrusted-forwarded`, requests
+are arriving with an `X-Forwarded-For` header that `CFM_TRUSTED_PROXY=false`
+will not believe, so all of them share one bucket; if it is an address that
+keeps changing, `X-Forwarded-For` is being trusted when it should not be. All
+three are [Running behind a reverse proxy](09-reverse-proxy.md).
 
 `/api/v1/health` keeps answering `200` throughout — verified — which is how you
 confirm the service itself is fine.

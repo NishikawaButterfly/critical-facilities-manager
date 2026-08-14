@@ -41,48 +41,82 @@ Read timeouts deserve one thought: an evidence download re-hashes the whole
 object before sending a byte, so a large file has a pause before the first byte,
 not a slow stream.
 
-## Client addresses, and a trap in the defaults
+## Client addresses, and the layer underneath
 
 The application attributes failed authentications to a network source, and locks
 that source out after too many failures ([Rate limiting in production](10-rate-limiting.md)).
-Which address counts as "the source" is what `CFM_TRUSTED_PROXY` claims to
-control:
+`CFM_TRUSTED_PROXY` decides where that source comes from:
 
-- **`false`** (default) — use the peer address of the TCP connection.
-- **`true`** — use the **rightmost** entry of `X-Forwarded-For`, the one a
-  proxy directly in front of the application appended. Earlier entries came
-  from outside and stay untrusted.
+- **`true`** — the **rightmost** entry of `X-Forwarded-For`, the one a proxy
+  directly in front of the application appended. Earlier entries came from
+  outside and stay untrusted. The rightmost rule is right: nginx, traefik, and
+  caddy all append.
+- **`false`** (default) — the client address the application is handed, *unless
+  the request carries an `X-Forwarded-For` header at all*. Every request that
+  does is attributed to one shared source named `untrusted-forwarded`, whatever
+  address it claims.
 
-The rightmost rule is right: nginx, traefik, and caddy all append. But there is
-a layer underneath the application, and it acts first.
+That second rule looks odd until you know what runs underneath the application.
 
 ### uvicorn rewrites the client address before the application sees it
 
-uvicorn enables `--proxy-headers` **by default**, with
-`--forwarded-allow-ips` defaulting to `127.0.0.1`. When the socket peer is in
-that list, uvicorn replaces the client address with the rightmost untrusted
-`X-Forwarded-For` entry — before any application code runs.
+uvicorn enables `--proxy-headers` **by default**, and `--forwarded-allow-ips`
+defaults to `$FORWARDED_ALLOW_IPS` or, failing that, `127.0.0.1`. When the
+socket peer is in that list, uvicorn replaces the client address with an entry
+from `X-Forwarded-For` — the rightmost one that is not itself a trusted address
+— before any application code runs. Verified against the installed uvicorn
+0.52.1: a header reading `203.0.113.77, 127.0.0.1` produced a lockout against
+`203.0.113.77`, the trusted rightmost entry being skipped.
 
-Four processes were started, each sent two failed authentications carrying
-`X-Forwarded-For: 198.51.100.9, 203.0.113.7` from the loopback, and their
-lockout log lines read:
+So with no proxy declared, "the peer address" is not something the application
+can ask for. What it gets may be the peer, or may be a string a client typed
+into a header, and nothing in the request distinguishes them. It therefore
+declines to divide its counters by that address: everything arriving with the
+header shares one bucket, so an attacker who rotates the value accumulates
+failures against that one bucket and gets locked out like anyone else.
 
-| Process | `CFM_TRUSTED_PROXY` | Source the lockout was recorded against |
-|---------|---------------------|------------------------------------------|
-| `uvicorn cfm.main:app` | unset (`false`) | `203.0.113.7` |
-| `uvicorn cfm.main:app` | `true` | `203.0.113.7` |
-| `uvicorn … --no-proxy-headers` | unset (`false`) | `127.0.0.1` |
-| `uvicorn … --forwarded-allow-ips ""` | unset (`false`) | `127.0.0.1` |
+Four processes were started with the limits at 3 failures, a 60-second window
+and a 120-second lockout. Each was sent, from the loopback, four attempts
+carrying `X-Forwarded-For: 198.51.100.9, 203.0.113.7`, one more that changed
+the header to `192.0.2.123`, and four carrying no forwarded header at all.
+Every process answered `401 401 401 429` to the first group and `401 401 401
+429` to the last; their lockout log lines read:
 
-Read the first row again: **with `CFM_TRUSTED_PROXY` at its default of `false`,
-a client-supplied header still decided the source.** In the same run, a good
-token sent with the locked address got `429`, and the identical token sent with
-a different address got `200` — the lockout was evaded by changing a header.
+| Process | `CFM_TRUSTED_PROXY` | Source, with the header | Source, without it |
+|---------|---------------------|-------------------------|--------------------|
+| `uvicorn cfm.main:app` | unset (`false`) | `untrusted-forwarded` | `127.0.0.1` |
+| `uvicorn cfm.main:app` | `true` | `203.0.113.7` | `127.0.0.1` |
+| `uvicorn … --no-proxy-headers` | unset (`false`) | `untrusted-forwarded` | `127.0.0.1` |
+| `uvicorn … --forwarded-allow-ips ""` | unset (`false`) | `untrusted-forwarded` | `127.0.0.1` |
 
-This is not a contradiction inside the application; it is the server underneath
-having already done the substitution. It matters because the setting's name
-promises otherwise, and because the condition — peer address `127.0.0.1` — is
-exactly the same-host proxy layout most deployments use.
+The attempt with the rotated header was refused `429` in every row but the
+second — where `CFM_TRUSTED_PROXY=true` says a different rightmost entry is a
+genuinely different client, and gave it its own budget (`401`). Rotating the
+header buys nothing anywhere else.
+
+Rows three and four are worth reading twice: turning uvicorn's rewriting off
+does **not** put header-carrying requests back on their peer address. The
+header is still in the request, the application still cannot verify who wrote
+it, and it still refuses to count on it. What those flags change is the address
+uvicorn reports — which is what the last column shows.
+
+### What it costs
+
+The shared bucket is not free, and the price falls on the deployment that never
+declared its proxy:
+
+- **All clients behind an undeclared proxy share one lockout.** Their requests
+  all carry the header the proxy appended, so ten failures from one user lock
+  out everyone else's tokens for `CFM_AUTH_LOCKOUT_SECONDS`. Setting
+  `CFM_TRUSTED_PROXY=true` — which that deployment should have set anyway —
+  gives every client its own bucket again.
+- **A client can hold two budgets.** Sending the header spends the shared
+  bucket; not sending it spends the one for the address the application is
+  given. An attacker willing to alternate gets two lockout budgets instead of
+  one. That is a factor of two on a throttle, not a way around it.
+
+Both are worse for availability than counting per address, and both are
+strictly better than a lockout that anyone can step around by editing a header.
 
 ### What to actually run
 
@@ -95,8 +129,9 @@ CFM_TRUSTED_PROXY=true
 
 uvicorn's default trust of `127.0.0.1` is sound *because* the bind is
 loopback-only: the only thing that can connect is something already on the
-host. Setting `CFM_TRUSTED_PROXY=true` makes the application's own view agree
-with uvicorn's rather than depending on it, and documents the intent.
+host. `CFM_TRUSTED_PROXY=true` is what makes the application agree, and it is
+not optional: leave it at `false` and every client behind that proxy counts
+into the one shared bucket, where any of them can lock out all the others.
 
 **A proxy on another host:**
 
@@ -106,10 +141,10 @@ CFM_TRUSTED_PROXY=true
 ```
 
 Name the proxy's address explicitly, and firewall the port so nothing else can
-reach it. Without `--forwarded-allow-ips`, uvicorn will not trust the remote
-proxy's headers, and with `CFM_TRUSTED_PROXY=false` every client behind that
-proxy would share one lockout bucket — one attacker locks out the whole
-office.
+reach it. `--forwarded-allow-ips` is what lets uvicorn substitute the forwarded
+address for a proxy that is not on the loopback; `CFM_TRUSTED_PROXY=true` is
+what lets the application count per client instead of putting the whole office
+in the shared bucket.
 
 **No proxy at all** (a development or single-machine installation):
 
@@ -118,15 +153,19 @@ $ python -m uvicorn cfm.main:app --host 127.0.0.1 --port 8000 --no-proxy-headers
 CFM_TRUSTED_PROXY=false
 ```
 
-`--no-proxy-headers` is what actually makes the application ignore
-`X-Forwarded-For`. Verified: the same test then recorded the lockout against
-`127.0.0.1`.
+`--no-proxy-headers` stops uvicorn from substituting anything, so the address
+the application is handed is the socket peer. `--forwarded-allow-ips ""` does
+the same by trusting nobody. Neither makes the application *ignore*
+`X-Forwarded-For`: a client that sends one anyway still lands in the shared
+bucket, because nothing in the request tells the application the header went
+unused. That costs the sender a budget it shares with every other header
+sender, and it forges no address, which is the trade worth having.
 
 ### If you trust a proxy you do not have
 
-Setting `CFM_TRUSTED_PROXY=true` — or leaving uvicorn's proxy headers on — while
-clients reach the application directly hands every client the ability to name
-its own source. The consequences, in order of seriousness:
+Setting `CFM_TRUSTED_PROXY=true` while clients reach the application directly
+hands every client the ability to name its own source. The consequences, in
+order of seriousness:
 
 1. **The lockout becomes optional.** An attacker rotates
    `X-Forwarded-For` and never accumulates failures against one bucket. Online

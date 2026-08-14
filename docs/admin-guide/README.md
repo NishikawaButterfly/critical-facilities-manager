@@ -38,7 +38,7 @@ asks you to read source to find a default.
 | 6 | [Token lifecycle](06-token-lifecycle.md) | Minting, expiry, revocation, deactivation, and the audit record |
 | 7 | [Evidence storage](07-evidence-storage.md) | Layout, write-once addressing, permissions, sizing, corruption |
 | 8 | [The web interface](08-web-interface.md) | Serving it, turning it off, what it needs (and does not need) |
-| 9 | [Running behind a reverse proxy](09-reverse-proxy.md) | TLS, `X-Forwarded-For`, and a trap in the defaults |
+| 9 | [Running behind a reverse proxy](09-reverse-proxy.md) | TLS, `X-Forwarded-For`, and the address the limiter counts |
 | 10 | [Rate limiting in production](10-rate-limiting.md) | Per-process counters, worker counts, tuning |
 | 11 | [Backups](11-backups.md) | Why the database and the evidence directory are one backup |
 | 12 | [Restore and disaster recovery](12-restore-and-disaster-recovery.md) | The verified restore, and what comes back with it |

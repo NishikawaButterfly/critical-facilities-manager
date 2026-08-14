@@ -146,8 +146,26 @@ def test_locked_sources_survive_the_sweep() -> None:
     assert limiter.retry_after("locked") is not None
 
 
-def test_client_source_uses_the_socket_peer_by_default() -> None:
-    request = make_request([(b"x-forwarded-for", b"203.0.113.7")])
+def test_client_source_uses_the_socket_peer_without_a_forwarded_header() -> None:
+    request = make_request([])
+    assert client_source(request, trusted_proxy=False) == "192.0.2.10"
+
+
+def test_untrusted_forwarded_requests_share_one_source() -> None:
+    # What uvicorn's proxy-header handling leaves behind: the reported
+    # client address is whatever the header claimed. Attributing failures
+    # to it would give an attacker a fresh budget per claim, so all of it
+    # counts into one bucket instead.
+    first = make_request([(b"x-forwarded-for", b"203.0.113.7")], client=("203.0.113.7", 40000))
+    second = make_request([(b"x-forwarded-for", b"198.51.100.9")], client=("198.51.100.9", 40000))
+    shared = client_source(first, trusted_proxy=False)
+    assert shared == client_source(second, trusted_proxy=False)
+    # The name operators read in the lockout log line and in the guide.
+    assert shared == "untrusted-forwarded"
+
+
+def test_an_untrusted_blank_forwarded_header_falls_back_to_the_peer() -> None:
+    request = make_request([(b"x-forwarded-for", b"   ")])
     assert client_source(request, trusted_proxy=False) == "192.0.2.10"
 
 
