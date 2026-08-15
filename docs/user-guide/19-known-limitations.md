@@ -204,14 +204,18 @@ a missing one does. Five edges are worth knowing before you rely on it.
   constraint's name and description, are unstructured text read in full by any
   authenticated token, and whoever wrote them may have named another site, its
   equipment, or its people. Nothing checks that and nothing redacts it.
-- **A cross-site constraint names what blocks you, in detail.** Starting an
-  order held up by a `mutual_exclusive_maintenance` constraint is refused with
-  a 409 that carries the **constraint name and id**, the **conflicting order's
-  id and title**, and the **conflicting asset's id** — even when that work sits
-  on a site you cannot read. It is not an opaque reference: the order's title
-  is free text written by somebody else. The refusal has to say what to wait
-  for to be worth anything; if that disclosure matters to you, do not bind
-  assets on different sites into one constraint.
+- **A cross-site constraint refusal is thin, by design.** Starting an order
+  held up by a `mutual_exclusive_maintenance` constraint whose blocking order
+  sits on a site you cannot read is refused with a 409 naming the constraint
+  and saying that a member asset outside your grants is under maintenance —
+  and nothing more. No order id, no title, no asset id: a refusal does not
+  hand over what a read withholds. That is the right boundary and it is also a
+  real operational limit — you learn that something is being waited for, not
+  what to wait for, and the person who can tell you is whoever holds a grant
+  on the other site. If the work needs that detail, grant the reader the site;
+  do not keep the constraint and expect the message to make up for it.
+  [Operational constraints](09-operational-constraints.md#when-the-blocking-order-is-on-a-site-you-cannot-read)
+  shows both messages.
 - **Identical evidence bytes are one stored object, and carry the first
   upload's declaration.** Content addressing deduplicates by SHA-256 across the
   whole installation. If the same bytes were first uploaded on another site and

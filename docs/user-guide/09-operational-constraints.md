@@ -45,6 +45,38 @@ The same refusal appears in the [order board](15-web-interface.md#order-board)
 when you press **Start**, quoted from the API word for word, with the error code
 underneath.
 
+### When the blocking order is on a site you cannot read
+
+A constraint may span sites, and your grants may not. If the order holding the
+lock sits on a site your grants do not cover — the same order a direct `GET`
+answers `404` for, as though it did not exist — the refusal does not name it:
+
+```
+{
+  "title": "Request conflicts with current state",
+  "status": 409,
+  "detail": "Constraint 'UPS redundancy pair' (586b0568-36a5-4f5b-9379-831ae84df916) allows only one of its member assets under maintenance at a time; another member asset, on a site your grants do not cover, already has an order in progress. That order is not named here because you may not read it: wait for it to finish, or ask somebody whose grants reach that site.",
+  "error_code": "maintenance_order.mutual_exclusion_conflict"
+}
+```
+
+Same status, same `error_code`, same rule enforced — a start that was refused
+before is still refused, and one that was allowed is still allowed. What
+changes is only how much the message says: no order id, no order title, no
+asset id, because a refusal must not hand over what a read withholds. There is
+no separate error code for this case; having one would itself tell you which
+side of the boundary the blocking work is on.
+
+The constraint is still named in full, and it is what you can act on: you may
+read it whatever your grants, so you can see exactly which rule stopped you and
+why. What it will not give you is the other side. Its `asset_ids` stays
+filtered to the members your grants cover, so reading the constraint does not
+tell you which site the blocking work is on, which asset it runs against, or
+who holds a grant there. Resolving that needs somebody who can see the whole
+installation: an administrator can read the grant configuration and coordinate
+with the other side. See
+[Site grants](03-roles-and-permissions.md#site-grants-where-your-authority-applies).
+
 ### The limits of the check
 
 Read these carefully, because each one is a way to defeat the protection while
@@ -110,9 +142,10 @@ the part that is site-owned: `asset_ids` lists only the members on sites your
 grants cover, and filtering the list by an asset you cannot read matches
 nothing. So each side sees its own members — but only the *membership* is
 filtered. The `name` and `description` are free text every authenticated token
-reads in full, and a refusal from this constraint names the conflicting order
-and asset even when they sit on the other side (see
-[Known limitations](19-known-limitations.md)).
+reads in full, and whoever wrote them may have named the other site in them
+(see [Known limitations](19-known-limitations.md)). A refusal from this
+constraint follows the membership rule rather than the free-text one: it names
+the conflicting order only to a caller who could have read it.
 
 **Members cannot be added or removed afterwards.** A constraint is created and
 retired, never edited — not its name, not its description, not its membership.

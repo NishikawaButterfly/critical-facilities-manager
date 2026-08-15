@@ -117,7 +117,15 @@ def schedule_order(
 ) -> MaintenanceOrderResponse:
     order = get_order(session, order_id)
     access.require_site(site_of_asset_id(session, order.asset_id))
-    return order_response(transition_order(session, actor, order, MaintenanceOrderStatus.SCHEDULED))
+    return order_response(
+        transition_order(
+            session,
+            actor,
+            order,
+            MaintenanceOrderStatus.SCHEDULED,
+            access.readable(MaintenanceOrder),
+        )
+    )
 
 
 @router.post("/{order_id}/start", response_model=MaintenanceOrderResponse)
@@ -130,7 +138,16 @@ def start_order(
     order = get_order(session, order_id)
     access.require_site(site_of_asset_id(session, order.asset_id))
     return order_response(
-        transition_order(session, actor, order, MaintenanceOrderStatus.IN_PROGRESS)
+        transition_order(
+            session,
+            actor,
+            order,
+            MaintenanceOrderStatus.IN_PROGRESS,
+            # The read filter decides how much of a blocking order the
+            # refusal may describe: what this caller cannot fetch, it is
+            # not told (see cfm.services.maintenance).
+            access.readable(MaintenanceOrder),
+        )
     )
 
 
@@ -150,6 +167,7 @@ def complete_order(
             actor,
             order,
             MaintenanceOrderStatus.DONE,
+            access.readable(MaintenanceOrder),
             notes=payload.completion_notes,
         )
     )
@@ -172,6 +190,7 @@ def cancel_order(
             actor,
             order,
             MaintenanceOrderStatus.CANCELLED,
+            access.readable(MaintenanceOrder),
             notes=reason,
         )
     )

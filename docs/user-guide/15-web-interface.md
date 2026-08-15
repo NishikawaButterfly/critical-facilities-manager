@@ -154,6 +154,11 @@ The refusal is shown on the card, verbatim, with its error code. Pressing
 >
 > `maintenance_order.mutual_exclusion_conflict`
 
+The board quotes whatever the API sent. If your grants do not cover the site
+the blocking order is on, what the API sent names the constraint and stops
+there, and that is what the card shows — the board adds nothing and hides
+nothing of its own.
+
 The order stays where it was and the button stays available. Fix the cause and
 press it again. [Error messages explained](17-error-messages.md) covers what
 each status means.

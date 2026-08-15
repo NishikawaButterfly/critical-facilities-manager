@@ -146,13 +146,43 @@ def update_order(
     return order
 
 
-def _check_mutual_exclusion(session: Session, order: MaintenanceOrder) -> None:
+def _readable_conflict(
+    session: Session, conflicting_order: MaintenanceOrder, readable: ColumnElement[bool]
+) -> bool:
+    """Whether this request could have fetched the blocking order directly.
+
+    The same filter :func:`read_order` applies, asked about one row that is
+    already in hand: if it admits the row, the caller may be told everything
+    about it, because a plain ``GET`` would have told them anyway.
+    """
+    admitted = session.scalar(
+        select(MaintenanceOrder.id).where(MaintenanceOrder.id == conflicting_order.id, readable)
+    )
+    return admitted is not None
+
+
+def _check_mutual_exclusion(
+    session: Session, order: MaintenanceOrder, readable: ColumnElement[bool]
+) -> None:
     """Reject starting the order while a sibling constrained asset is under work.
 
     This guard sits next to the open-permit guard below: it looks for an
     active ``mutual_exclusive_maintenance`` constraint that contains the
     order's asset and another member asset with an order already in
-    progress, and names both the constraint and the conflicting order.
+    progress, and names the constraint that fired.
+
+    How much it says about the conflicting order depends on ``readable``,
+    the caller's read filter for maintenance orders. A refusal must not
+    hand over what a read withholds: when the blocking order sits outside
+    the caller's grants — where a direct fetch answers 404 — its id, its
+    title and its asset are left out, and the message says only that a
+    member asset the caller cannot see is under maintenance. The constraint
+    itself belongs to no site and every token may read it, so its name and
+    id stay in both messages; they are what makes the refusal answerable.
+
+    Which order blocks which is decided above this line and does not depend
+    on ``readable`` at all: the caller is refused exactly when they were
+    refused before, and only the wording of the refusal changes.
     """
     sibling = aliased(ConstraintMember)
     row = session.execute(
@@ -173,11 +203,20 @@ def _check_mutual_exclusion(session: Session, order: MaintenanceOrder) -> None:
         return
     constraint: Constraint = row[0]
     conflicting_order: MaintenanceOrder = row[1]
+    if _readable_conflict(session, conflicting_order, readable):
+        raise ConflictError(
+            f"Constraint {constraint.name!r} ({constraint.id}) allows only one of its member "
+            f"assets under maintenance at a time; order {conflicting_order.id} "
+            f"({conflicting_order.title!r}) is already in progress on asset "
+            f"{conflicting_order.asset_id}.",
+            error_code="maintenance_order.mutual_exclusion_conflict",
+        )
     raise ConflictError(
         f"Constraint {constraint.name!r} ({constraint.id}) allows only one of its member "
-        f"assets under maintenance at a time; order {conflicting_order.id} "
-        f"({conflicting_order.title!r}) is already in progress on asset "
-        f"{conflicting_order.asset_id}.",
+        "assets under maintenance at a time; another member asset, on a site your grants "
+        "do not cover, already has an order in progress. That order is not named here "
+        "because you may not read it: wait for it to finish, or ask somebody whose grants "
+        "reach that site.",
         error_code="maintenance_order.mutual_exclusion_conflict",
     )
 
@@ -187,9 +226,18 @@ def transition_order(
     actor: str,
     order: MaintenanceOrder,
     to_status: MaintenanceOrderStatus,
+    readable: ColumnElement[bool],
     *,
     notes: str | None = None,
 ) -> MaintenanceOrder:
+    """Move the order to ``to_status``, enforcing the guards on the way.
+
+    ``readable`` is the caller's read filter for maintenance orders, the
+    same one :func:`read_order` takes. Only the start guard consults it, and
+    only to decide how much of a blocking order it may describe; it is
+    required rather than defaulted so no future caller can forget it and
+    quietly widen what a refusal discloses.
+    """
     current = MaintenanceOrderStatus(order.status)
     allowed = ORDER_TRANSITIONS[current]
     if to_status not in allowed:
@@ -200,7 +248,7 @@ def transition_order(
             error_code="maintenance_order.invalid_transition",
         )
     if to_status is MaintenanceOrderStatus.IN_PROGRESS:
-        _check_mutual_exclusion(session, order)
+        _check_mutual_exclusion(session, order, readable)
     if to_status is MaintenanceOrderStatus.DONE:
         issued_permits = session.scalar(
             select(func.count())

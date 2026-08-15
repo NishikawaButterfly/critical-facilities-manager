@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, true
 from sqlalchemy.orm import Session
 
 from .config import get_settings
@@ -90,6 +90,14 @@ SEED_CREW: tuple[tuple[str, str, UserRole], ...] = (
     (SEED_REVIEWER, "Marco Alvarez", UserRole.ENGINEER),
     (SEED_VIEWER, "Vera Lindqvist", UserRole.VIEWER),
 )
+
+SEED_READS_EVERYTHING = true()
+"""The read filter the seeder passes: it builds the installation, not a request.
+
+Order transitions take the caller's read boundary so a refusal never
+describes work the caller could not have read. The seeder has no caller and
+no grants to narrow it by, and the campus it writes raises no refusal anyway.
+"""
 
 
 class SeedError(RuntimeError):
@@ -273,7 +281,13 @@ def _seed(session: Session) -> None:
         description="Battery string voltages, transfer test, capacitor check.",
         due_date=today + timedelta(days=30),
     )
-    transition_order(session, SEED_ENGINEER, ups_inspection, MaintenanceOrderStatus.SCHEDULED)
+    transition_order(
+        session,
+        SEED_ENGINEER,
+        ups_inspection,
+        MaintenanceOrderStatus.SCHEDULED,
+        SEED_READS_EVERYTHING,
+    )
 
     fan_repair = create_order(
         session,
@@ -284,8 +298,16 @@ def _seed(session: Session) -> None:
         description="Fan 2 reports zero RPM; unit running on redundant fans.",
         due_date=today + timedelta(days=7),
     )
-    transition_order(session, SEED_ENGINEER, fan_repair, MaintenanceOrderStatus.SCHEDULED)
-    transition_order(session, SEED_ENGINEER, fan_repair, MaintenanceOrderStatus.IN_PROGRESS)
+    transition_order(
+        session, SEED_ENGINEER, fan_repair, MaintenanceOrderStatus.SCHEDULED, SEED_READS_EVERYTHING
+    )
+    transition_order(
+        session,
+        SEED_ENGINEER,
+        fan_repair,
+        MaintenanceOrderStatus.IN_PROGRESS,
+        SEED_READS_EVERYTHING,
+    )
 
     chiller_service = create_order(
         session,
@@ -296,13 +318,26 @@ def _seed(session: Session) -> None:
         description="Condenser cleaning, refrigerant charge check, vibration survey.",
         due_date=today - timedelta(days=3),
     )
-    transition_order(session, SEED_ENGINEER, chiller_service, MaintenanceOrderStatus.SCHEDULED)
-    transition_order(session, SEED_ENGINEER, chiller_service, MaintenanceOrderStatus.IN_PROGRESS)
+    transition_order(
+        session,
+        SEED_ENGINEER,
+        chiller_service,
+        MaintenanceOrderStatus.SCHEDULED,
+        SEED_READS_EVERYTHING,
+    )
+    transition_order(
+        session,
+        SEED_ENGINEER,
+        chiller_service,
+        MaintenanceOrderStatus.IN_PROGRESS,
+        SEED_READS_EVERYTHING,
+    )
     transition_order(
         session,
         SEED_ENGINEER,
         chiller_service,
         MaintenanceOrderStatus.DONE,
+        SEED_READS_EVERYTHING,
         notes="Service completed; all parameters nominal.",
     )
 
@@ -330,6 +365,7 @@ def _seed(session: Session) -> None:
         SEED_ENGINEER,
         duplicate_check,
         MaintenanceOrderStatus.CANCELLED,
+        SEED_READS_EVERYTHING,
         notes="Duplicate of an existing work order.",
     )
 

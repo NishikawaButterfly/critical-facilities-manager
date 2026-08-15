@@ -130,11 +130,13 @@ them may have named the other site, its equipment, or its people in them —
 nothing checks that, and nothing redacts it. The same is true of a procedure's
 title and steps.
 
-A cross-site constraint can also disclose through a **refusal**. When it blocks
-your order, the 409 names the constraint and the conflicting work so the
-refusal is actionable — and that conflicting work may be on the other site.
-[Known limitations](19-known-limitations.md) lists exactly what that message
-contains.
+A **refusal** from a cross-site constraint follows the membership rule, not the
+free-text one. When it blocks your order, the 409 always names the constraint,
+because that is what makes the refusal actionable; it names the conflicting
+order, its title and its asset only when you could have fetched that order
+yourself. Work you cannot read is not described to you by a rejection either.
+See
+[Operational constraints](09-operational-constraints.md#when-the-blocking-order-is-on-a-site-you-cannot-read).
 
 ### The two grant kinds
 
@@ -255,8 +257,8 @@ That is the whole mechanism.
 ### What the scope does not hide
 
 Site scoping is a read boundary over site-owned domain records. It is not a
-guarantee that a token cannot learn another site exists. Four things stay
-outside it, and all four are deliberate:
+guarantee that a token cannot learn another site exists. Three things stay
+outside it, and all three are deliberate:
 
 - **Write-side probing.** A user who may write at all — an engineer or an
   admin — can tell an out-of-scope id from a made-up one by *attempting a
@@ -265,14 +267,11 @@ outside it, and all four are deliberate:
   deliberately explanatory, because it is what tells an engineer who mistyped
   an id, or whose grants were narrowed this morning, what actually happened. A
   `viewer` never reaches the distinction, because the role gate refuses the
-  write first — but that closes this one channel, not the three below.
+  write first — but that closes this one channel, not the two below.
 - **Installation-scoped free text.** Procedure titles and steps, and
   constraint names and descriptions, are readable by every authenticated token
   and may name another site, its equipment or its people. No role restricts
   them and nothing redacts them.
-- **Cross-site constraint refusals.** A 409 from a constraint names the
-  conflicting work, which may live on a site you cannot read. See
-  [Known limitations](19-known-limitations.md).
 - **Evidence declaration metadata.** When identical bytes are uploaded on two
   sites, the stored declaration is the one from the first upload. See
   [Evidence](13-evidence.md).

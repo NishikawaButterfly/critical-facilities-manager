@@ -7,6 +7,10 @@ an object on another site answers with the same 404 a missing object gets, so
 an id that exists out of scope cannot be told apart from one that never
 existed. Objects that belong to no single site — procedures and constraints —
 stay readable, because the site-scoped workflows refer to them.
+
+A refusal is bound by the same line as a read: a rejection must not reveal
+identifiers or free text from a record the same caller could not have fetched
+directly.
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from httpx import AsyncClient
+from httpx import AsyncClient, Response
 
 from .conftest import (
     ACTOR,
@@ -46,6 +50,18 @@ SITE_OWNED_LISTINGS = (
 )
 
 EVIDENCE = b"thermal image of the output breaker after the load test"
+
+# The fields of a maintenance order that say nothing about which order it is:
+# every order has them, and the caller picked the same values for their own.
+# Everything else the record carries is an identifier or somebody's words.
+SHARED_ORDER_VOCABULARY = frozenset({"order_type", "status"})
+"""Fields whose values are drawn from a vocabulary every order shares.
+
+`order_type` and `status` come from fixed enumerations, so finding one of
+their values in a refusal says nothing about the record that was withheld.
+Everything else on a hidden order — including its `due_date`, which is its
+own scheduling information — must be absent from the message.
+"""
 
 
 async def populate_site(client: AsyncClient, suffix: str) -> dict[str, Any]:
@@ -115,6 +131,64 @@ async def user_without_grants(client: AsyncClient, username: str) -> dict[str, s
         )
         assert removed.status_code == 204, removed.text
     return headers
+
+
+async def cross_site_conflict(client: AsyncClient) -> dict[str, Any]:
+    """Two sites bound into one constraint, with the site-B member under work.
+
+    Site A carries the caller's own scheduled order; site B carries the order
+    already in progress that will block it. Everything is set up with the
+    installation-wide token, so the fixture never depends on the boundary the
+    tests below are about.
+    """
+    site_a = await create_hierarchy(client, "A")
+    site_b = await create_hierarchy(client, "B")
+    asset_a = await create_asset(client, site_a["room"]["id"], tag="UPS-A-01")
+    asset_b = await create_asset(client, site_b["room"]["id"], tag="UPS-B-01")
+    constraint = await create_constraint(
+        client, [asset_a["id"], asset_b["id"]], name="Cross-site redundancy pair"
+    )
+    blocking = await create_order(
+        client,
+        asset_b["id"],
+        title="Site B battery string replacement",
+        description="Strings 3 and 4 swapped, vendor crew on site until Friday.",
+        # A due date of its own: shared with the caller's order it would be
+        # indistinguishable from the default, and the symmetry test below
+        # could not tell "absent" from "the same value anyway".
+        due_date="2027-03-19",
+    )
+    scheduled = await client.post(
+        f"/api/v1/maintenance-orders/{blocking['id']}/schedule", headers=ACTOR
+    )
+    assert scheduled.status_code == 200, scheduled.text
+    started = await client.post(f"/api/v1/maintenance-orders/{blocking['id']}/start", headers=ACTOR)
+    assert started.status_code == 200, started.text
+
+    own = await create_order(client, asset_a["id"], title="Site A quarterly inspection")
+    queued = await client.post(f"/api/v1/maintenance-orders/{own['id']}/schedule", headers=ACTOR)
+    assert queued.status_code == 200, queued.text
+    return {
+        "site_a": site_a["site"],
+        "site_b": site_b["site"],
+        "asset_a": asset_a,
+        "asset_b": asset_b,
+        "constraint": constraint,
+        "blocking": started.json(),
+        "own": own,
+    }
+
+
+async def start_refused(
+    client: AsyncClient, conflict: dict[str, Any], headers: dict[str, str]
+) -> Response:
+    """The 409 raised by starting the site-A order held up by the constraint."""
+    refused = await client.post(
+        f"/api/v1/maintenance-orders/{conflict['own']['id']}/start", headers=headers
+    )
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error_code"] == "maintenance_order.mutual_exclusion_conflict"
+    return refused
 
 
 async def upload(client: AsyncClient, path: str, content: bytes) -> dict[str, Any]:
@@ -475,6 +549,109 @@ async def test_a_write_against_an_unknown_id_still_answers_404(client: AsyncClie
         missing = await client.post(path, json={"note": "x"}, headers=ACTOR)
         assert missing.status_code == 404, path
         assert missing.json()["error_code"] == error_code
+
+
+@pytest.mark.parametrize("role", ["engineer", "admin"])
+async def test_a_cross_site_refusal_does_not_name_the_work_it_hides(
+    client: AsyncClient, role: str
+) -> None:
+    """Grants decide what a refusal may say — the role does not.
+
+    An admin holding a grant on site A only reads site A only, so the
+    refusal tells them exactly what it tells an engineer in the same
+    position. Administering users and grants installation-wide buys no
+    view of the work itself.
+    """
+    conflict = await cross_site_conflict(client)
+    _, scoped = await create_scoped_user(
+        client, f"blocked-{role}", role=role, site_ids=[conflict["site_a"]["id"]]
+    )
+
+    refused = await start_refused(client, conflict, scoped)
+
+    blocking = conflict["blocking"]
+    for field in ("id", "title", "asset_id"):
+        assert blocking[field] not in refused.text, field
+
+    # It is still a refusal: the order the caller tried to start stayed put.
+    unchanged = await client.get(
+        f"/api/v1/maintenance-orders/{conflict['own']['id']}", headers=scoped
+    )
+    assert unchanged.json()["status"] == "scheduled"
+
+
+async def test_a_redacted_refusal_is_still_actionable(client: AsyncClient) -> None:
+    conflict = await cross_site_conflict(client)
+    _, eng_a = await create_scoped_user(client, "acting-eng", site_ids=[conflict["site_a"]["id"]])
+
+    detail = (await start_refused(client, conflict, eng_a)).json()["detail"]
+
+    # The constraint is installation-scoped, so naming it gives away nothing
+    # a read withholds — and it is the one thing that makes the refusal
+    # answerable rather than merely final.
+    constraint = conflict["constraint"]
+    assert constraint["name"] in detail
+    assert constraint["id"] in detail
+    assert "member" in detail
+    assert "in progress" in detail
+    assert conflict["blocking"]["id"] not in detail
+
+    # The constraint the message names is one this caller can go and read.
+    looked_up = await client.get(f"/api/v1/constraints/{constraint['id']}", headers=eng_a)
+    assert looked_up.status_code == 200, looked_up.text
+    assert looked_up.json()["name"] == constraint["name"]
+    # And only its own side of the membership, as it always did.
+    assert looked_up.json()["asset_ids"] == [conflict["asset_a"]["id"]]
+
+
+@pytest.mark.parametrize("reach", ["both-sites", "installation-wide"])
+async def test_a_readable_conflict_keeps_the_detailed_refusal(
+    client: AsyncClient, reach: str
+) -> None:
+    conflict = await cross_site_conflict(client)
+    site_ids = (
+        None
+        if reach == "installation-wide"
+        else [conflict["site_a"]["id"], conflict["site_b"]["id"]]
+    )
+    _, headers = await create_scoped_user(client, f"reader-{reach}", site_ids=site_ids)
+
+    detail = (await start_refused(client, conflict, headers)).json()["detail"]
+
+    # Nothing is withheld from a caller who could have fetched the order.
+    blocking = conflict["blocking"]
+    for field in ("id", "title", "asset_id"):
+        assert blocking[field] in detail, field
+    readable = await client.get(f"/api/v1/maintenance-orders/{blocking['id']}", headers=headers)
+    assert readable.status_code == 200, readable.text
+
+
+async def test_a_refusal_withholds_what_the_read_withholds(client: AsyncClient) -> None:
+    """Read and refusal draw the same line around the same record."""
+    conflict = await cross_site_conflict(client)
+    _, eng_a = await create_scoped_user(
+        client, "symmetric-eng", site_ids=[conflict["site_a"]["id"]]
+    )
+    blocking = conflict["blocking"]
+    path = f"/api/v1/maintenance-orders/{blocking['id']}"
+
+    # The record exists and is refused to this caller alone.
+    assert (await client.get(path, headers=ACTOR)).status_code == 200
+    assert (await client.get(path, headers=eng_a)).status_code == 404
+
+    refused = await start_refused(client, conflict, eng_a)
+
+    withheld = {
+        field: value
+        for field, value in blocking.items()
+        if isinstance(value, str) and field not in SHARED_ORDER_VOCABULARY
+    }
+    assert withheld.keys() >= {"id", "asset_id", "title", "description", "due_date"}
+    # The blocking order carries a due date of its own, so its absence from
+    # the refusal is a real assertion rather than a coincidence of fixtures.
+    assert blocking["due_date"] != conflict["own"]["due_date"]
+    for field, value in withheld.items():
+        assert value not in refused.text, field
 
 
 async def test_scoped_reads_leave_write_authorization_unchanged(client: AsyncClient) -> None:

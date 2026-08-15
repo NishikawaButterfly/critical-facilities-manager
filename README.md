@@ -62,8 +62,9 @@ describes what the platform is and how it is built.
   deleting a site itself — require an installation-wide grant to write, stay
   readable to any authenticated user because the site-scoped work refers to
   them, and expose their site-owned parts (a constraint's member assets) only
-  where grants cover them; their free text is not filtered, and a cross-site
-  constraint's refusal names the work that blocks you. Scoped reads are a
+  where grants cover them; their free text is not filtered. A refusal follows
+  the same boundary as a read: a constraint blocking your order names the
+  conflicting work only to a caller who could have read it. Scoped reads are a
   boundary over site-owned records, not tenant isolation — see
   [Known limitations](docs/user-guide/19-known-limitations.md). Moving an asset
   across sites requires authority over both. Every audit entry records the
@@ -125,7 +126,8 @@ describes what the platform is and how it is built.
   retired but never edited. The `mutual_exclusive_maintenance` kind (two or
   more members) is enforced when a maintenance order starts: if another
   member asset already has an order in progress, the start is rejected with
-  a 409 problem naming the constraint and the conflicting order. The
+  a 409 problem naming the constraint, and the conflicting order too when the
+  caller's grants would have let them read it. The
   `advisory` kind is free text attached to assets and is only surfaced,
   never enforced.
 - **File evidence with content hashes** — files (photos, scans, signed
