@@ -54,7 +54,14 @@ EVIDENCE = b"thermal image of the output breaker after the load test"
 # The fields of a maintenance order that say nothing about which order it is:
 # every order has them, and the caller picked the same values for their own.
 # Everything else the record carries is an identifier or somebody's words.
-SHARED_ORDER_VOCABULARY = frozenset({"order_type", "status", "due_date"})
+SHARED_ORDER_VOCABULARY = frozenset({"order_type", "status"})
+"""Fields whose values are drawn from a vocabulary every order shares.
+
+`order_type` and `status` come from fixed enumerations, so finding one of
+their values in a refusal says nothing about the record that was withheld.
+Everything else on a hidden order — including its `due_date`, which is its
+own scheduling information — must be absent from the message.
+"""
 
 
 async def populate_site(client: AsyncClient, suffix: str) -> dict[str, Any]:
@@ -146,6 +153,10 @@ async def cross_site_conflict(client: AsyncClient) -> dict[str, Any]:
         asset_b["id"],
         title="Site B battery string replacement",
         description="Strings 3 and 4 swapped, vendor crew on site until Friday.",
+        # A due date of its own: shared with the caller's order it would be
+        # indistinguishable from the default, and the symmetry test below
+        # could not tell "absent" from "the same value anyway".
+        due_date="2027-03-19",
     )
     scheduled = await client.post(
         f"/api/v1/maintenance-orders/{blocking['id']}/schedule", headers=ACTOR
@@ -540,11 +551,23 @@ async def test_a_write_against_an_unknown_id_still_answers_404(client: AsyncClie
         assert missing.json()["error_code"] == error_code
 
 
-async def test_a_cross_site_refusal_does_not_name_the_work_it_hides(client: AsyncClient) -> None:
-    conflict = await cross_site_conflict(client)
-    _, eng_a = await create_scoped_user(client, "blocked-eng", site_ids=[conflict["site_a"]["id"]])
+@pytest.mark.parametrize("role", ["engineer", "admin"])
+async def test_a_cross_site_refusal_does_not_name_the_work_it_hides(
+    client: AsyncClient, role: str
+) -> None:
+    """Grants decide what a refusal may say — the role does not.
 
-    refused = await start_refused(client, conflict, eng_a)
+    An admin holding a grant on site A only reads site A only, so the
+    refusal tells them exactly what it tells an engineer in the same
+    position. Administering users and grants installation-wide buys no
+    view of the work itself.
+    """
+    conflict = await cross_site_conflict(client)
+    _, scoped = await create_scoped_user(
+        client, f"blocked-{role}", role=role, site_ids=[conflict["site_a"]["id"]]
+    )
+
+    refused = await start_refused(client, conflict, scoped)
 
     blocking = conflict["blocking"]
     for field in ("id", "title", "asset_id"):
@@ -552,7 +575,7 @@ async def test_a_cross_site_refusal_does_not_name_the_work_it_hides(client: Asyn
 
     # It is still a refusal: the order the caller tried to start stayed put.
     unchanged = await client.get(
-        f"/api/v1/maintenance-orders/{conflict['own']['id']}", headers=eng_a
+        f"/api/v1/maintenance-orders/{conflict['own']['id']}", headers=scoped
     )
     assert unchanged.json()["status"] == "scheduled"
 
@@ -623,7 +646,10 @@ async def test_a_refusal_withholds_what_the_read_withholds(client: AsyncClient) 
         for field, value in blocking.items()
         if isinstance(value, str) and field not in SHARED_ORDER_VOCABULARY
     }
-    assert withheld.keys() >= {"id", "asset_id", "title", "description"}
+    assert withheld.keys() >= {"id", "asset_id", "title", "description", "due_date"}
+    # The blocking order carries a due date of its own, so its absence from
+    # the refusal is a real assertion rather than a coincidence of fixtures.
+    assert blocking["due_date"] != conflict["own"]["due_date"]
     for field, value in withheld.items():
         assert value not in refused.text, field
 

@@ -67,9 +67,14 @@ asset id, because a refusal must not hand over what a read withholds. There is
 no separate error code for this case; having one would itself tell you which
 side of the boundary the blocking work is on.
 
-The constraint is still named in full, and it is the part you can act on: you
-may read it whatever your grants, so you can look up who owns the other
-members and ask them. See
+The constraint is still named in full, and it is what you can act on: you may
+read it whatever your grants, so you can see exactly which rule stopped you and
+why. What it will not give you is the other side. Its `asset_ids` stays
+filtered to the members your grants cover, so reading the constraint does not
+tell you which site the blocking work is on, which asset it runs against, or
+who holds a grant there. Resolving that needs somebody who can see the whole
+installation: an administrator can read the grant configuration and coordinate
+with the other side. See
 [Site grants](03-roles-and-permissions.md#site-grants-where-your-authority-applies).
 
 ### The limits of the check
