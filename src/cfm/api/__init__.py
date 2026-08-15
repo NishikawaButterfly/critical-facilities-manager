@@ -1,9 +1,12 @@
 """Versioned REST API routers.
 
-Authorization is applied here, at include time, in one layer: ``/health``
-stays public for probes, ``/me`` needs any authenticated user, the domain
-routers admit any authenticated reader but only engineers and admins for
-writes, and user/token management requires the admin role.
+Role authorization is applied here, at include time, in one layer:
+``/health`` stays public for probes, ``/me`` needs any authenticated user,
+the domain routers admit any authenticated reader but only engineers and
+admins for writes, and user/token management requires the admin role. How
+far that authority reaches is the other half of the question, and the
+endpoints answer it with the caller's site grants, reads included (see
+:mod:`cfm.authz`).
 """
 
 from __future__ import annotations

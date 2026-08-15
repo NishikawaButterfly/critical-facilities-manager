@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from ..authz import scope_label
@@ -273,14 +274,20 @@ def evidence_attachment_response(attachment: EvidenceAttachment) -> EvidenceAtta
     )
 
 
-def constraint_response(constraint: Constraint) -> ConstraintResponse:
+def constraint_response(constraint: Constraint, asset_ids: Sequence[str]) -> ConstraintResponse:
+    """A constraint with the membership the caller is allowed to see.
+
+    The member assets are site-owned even though the constraint itself is
+    not, so the caller passes the ids their grants cover rather than the
+    relationship's full list.
+    """
     return ConstraintResponse(
         id=constraint.id,
         kind=ConstraintKind(constraint.kind),
         name=constraint.name,
         description=constraint.description,
         status=ConstraintStatus(constraint.status),
-        asset_ids=[member.asset_id for member in constraint.members],
+        asset_ids=list(asset_ids),
         created_at=ensure_utc(constraint.created_at),
         updated_at=ensure_utc(constraint.updated_at),
     )

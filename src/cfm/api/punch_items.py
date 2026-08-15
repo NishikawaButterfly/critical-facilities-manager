@@ -12,7 +12,12 @@ from ..authz import site_of_asset_id, site_of_location_id, site_of_punch_item
 from ..domain import PunchItemCategory, PunchItemSeverity, PunchItemStatus
 from ..models import PunchItem
 from ..schemas import Page, PunchItemClose, PunchItemCreate, PunchItemResponse
-from ..services.punch_items import create_punch_item, get_punch_item, transition_punch_item
+from ..services.punch_items import (
+    create_punch_item,
+    get_punch_item,
+    read_punch_item,
+    transition_punch_item,
+)
 from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
 from .serializers import punch_item_response
 
@@ -56,6 +61,7 @@ def create_punch_item_endpoint(
 def list_punch_items(
     session: SessionDep,
     page: PageDep,
+    access: SiteAccessDep,
     *,
     asset_id: Annotated[str | None, Query()] = None,
     location_id: Annotated[str | None, Query()] = None,
@@ -64,8 +70,9 @@ def list_punch_items(
     status: Annotated[PunchItemStatus | None, Query()] = None,
     overdue: Annotated[bool | None, Query()] = None,
 ) -> Page[PunchItemResponse]:
-    query = select(PunchItem)
-    count_query = select(func.count()).select_from(PunchItem)
+    readable = access.readable(PunchItem)
+    query = select(PunchItem).where(readable)
+    count_query = select(func.count()).select_from(PunchItem).where(readable)
     if asset_id is not None:
         query = query.where(PunchItem.asset_id == asset_id)
         count_query = count_query.where(PunchItem.asset_id == asset_id)
@@ -100,8 +107,10 @@ def list_punch_items(
 
 
 @router.get("/{punch_item_id}", response_model=PunchItemResponse)
-def get_punch_item_endpoint(punch_item_id: str, session: SessionDep) -> PunchItemResponse:
-    return punch_item_response(get_punch_item(session, punch_item_id))
+def get_punch_item_endpoint(
+    punch_item_id: str, session: SessionDep, access: SiteAccessDep
+) -> PunchItemResponse:
+    return punch_item_response(read_punch_item(session, punch_item_id, access.readable(PunchItem)))
 
 
 @router.post("/{punch_item_id}/start", response_model=PunchItemResponse)

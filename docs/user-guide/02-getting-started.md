@@ -94,7 +94,7 @@ The four demo users, used throughout this manual:
 | `rowan-admin` | Rowan Ellis | admin | Creates users, mints tokens, manages site grants |
 | `priya-eng` | Priya Sharma | engineer | Does the work: raises orders, executes tests, fixes defects |
 | `marco-eng` | Marco Alvarez | engineer | Does the second half: approves, issues, witnesses, verifies |
-| `vera-viewer` | Vera Lindqvist | viewer | Reads everything, changes nothing |
+| `vera-viewer` | Vera Lindqvist | viewer | Reads the whole demo estate, changes nothing |
 
 ## 3. Open the web interface
 

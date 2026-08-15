@@ -1,10 +1,11 @@
 """Site-scoped write authority.
 
 A user's role says what they may do; their site grants say where their
-write authority applies. An installation-wide grant (``site_id`` null)
-covers every site; a site grant covers that site's whole subtree. Objects
-that belong to no single site (procedures, constraints, sites themselves)
-require an installation-wide grant. Reads stay installation-wide.
+authority applies. An installation-wide grant (``site_id`` null) covers
+every site; a site grant covers that site's whole subtree. Objects that
+belong to no single site (procedures, constraints, sites themselves)
+require an installation-wide grant. The reading half of the same rule has
+its own file, tests/test_read_scope.py.
 """
 
 from __future__ import annotations
@@ -85,9 +86,11 @@ async def test_site_scoped_engineer_cannot_write_on_another_site(client: AsyncCl
     )
     assert allowed.status_code == 200
 
-    # Reads stay installation-wide: the scoped engineer still sees site B.
+    # Reads follow the same grants: site B's asset is not there to be read,
+    # and answers what a missing asset answers (see tests/test_read_scope.py).
     fetched = await client.get(f"/api/v1/assets/{asset_b['id']}", headers=eng_a)
-    assert fetched.status_code == 200
+    assert fetched.status_code == 404
+    assert fetched.json()["error_code"] == "asset.not_found"
 
 
 async def test_site_grant_covers_the_whole_site_subtree(client: AsyncClient) -> None:

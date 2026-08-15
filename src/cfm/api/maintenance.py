@@ -21,6 +21,7 @@ from ..schemas import (
 from ..services.maintenance import (
     create_order,
     get_order,
+    read_order,
     transition_order,
     update_order,
 )
@@ -54,12 +55,15 @@ def create_order_endpoint(
 def list_orders(
     session: SessionDep,
     page: PageDep,
+    access: SiteAccessDep,
+    *,
     asset_id: Annotated[str | None, Query()] = None,
     status: Annotated[MaintenanceOrderStatus | None, Query()] = None,
     order_type: Annotated[MaintenanceOrderType | None, Query()] = None,
 ) -> Page[MaintenanceOrderResponse]:
-    query = select(MaintenanceOrder)
-    count_query = select(func.count()).select_from(MaintenanceOrder)
+    readable = access.readable(MaintenanceOrder)
+    query = select(MaintenanceOrder).where(readable)
+    count_query = select(func.count()).select_from(MaintenanceOrder).where(readable)
     if asset_id is not None:
         query = query.where(MaintenanceOrder.asset_id == asset_id)
         count_query = count_query.where(MaintenanceOrder.asset_id == asset_id)
@@ -84,8 +88,10 @@ def list_orders(
 
 
 @router.get("/{order_id}", response_model=MaintenanceOrderResponse)
-def get_order_endpoint(order_id: str, session: SessionDep) -> MaintenanceOrderResponse:
-    return order_response(get_order(session, order_id))
+def get_order_endpoint(
+    order_id: str, session: SessionDep, access: SiteAccessDep
+) -> MaintenanceOrderResponse:
+    return order_response(read_order(session, order_id, access.readable(MaintenanceOrder)))
 
 
 @router.patch("/{order_id}", response_model=MaintenanceOrderResponse)

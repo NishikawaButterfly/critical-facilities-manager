@@ -416,8 +416,10 @@ class SiteGrant(Base):
     The user's role says *what* they may do; their grants say *where*. A row
     with ``site_id`` set covers that site's whole subtree; a row with
     ``site_id`` null is an installation-wide grant covering every site,
-    current and future. Objects that belong to no single site require an
-    installation-wide grant to write. Reads are not scoped.
+    current and future. Grants scope reads as well as writes: a listing
+    shows only covered rows and an uncovered object answers 404. Objects
+    that belong to no single site require an installation-wide grant to
+    write and stay readable to any authenticated user.
     """
 
     __tablename__ = "site_grants"
@@ -437,7 +439,11 @@ class AuditEntry(Base):
     Nothing in the code base updates or deletes these rows, and the API only
     exposes reads. ``scope`` records the authorization scope a domain write
     was covered by ("installation" or "site:<id>"); it is null for actions
-    that carry no site-scope check, such as user and token management.
+    that carry no site-scope check, such as user and token management. That
+    stored label is also what read authorization uses: a site-scoped reader
+    sees an entry when the scope recorded at write time is one of their
+    grants, so history is judged by the evidence written with it rather
+    than by where the entity happens to sit today.
     """
 
     __tablename__ = "audit_entries"

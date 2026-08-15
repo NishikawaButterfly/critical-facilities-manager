@@ -97,6 +97,10 @@ installation-wide grant.
 
 Ask an administrator for the grant, naming the site id from the message.
 
+This 403 only ever answers a **write**. Reading an object your grants do not
+cover is answered 404, deliberately indistinguishable from an object that does
+not exist — see [404: not found](#404-not-found).
+
 **Why the interface offered an action it could not do:** the page can read your
 role but not your grants — only an admin token can read those. So it offers what
 your role permits and lets the server refuse the rest. That is by design; see
@@ -122,6 +126,15 @@ The thing the URL addressed does not exist.
 Usually a mistyped or stale identifier. Note that tokens and site grants are
 looked up *within* a user: the right grant id under the wrong user id gives
 `site_grant.not_found`, not a permission error.
+
+**A 404 also covers "outside your site grants".** A record on a site you hold
+no grant for answers exactly this, with the same code and the same wording as a
+record that does not exist, and it is absent from listings and from their
+`total`. That is the design, not a bug to work around: the existence of another
+site's work is information the grant withholds. If a colleague can fetch an id
+that 404s for you, ask an administrator whether your grants cover that site
+before you go looking for a data problem — see
+[Roles and permissions](03-roles-and-permissions.md#site-grants-where-your-authority-applies).
 
 A missing record referenced in a request **body** rather than the URL answers
 **422**, not 404 — see below.

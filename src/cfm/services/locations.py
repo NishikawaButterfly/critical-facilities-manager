@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.orm import Session
 
 from ..audit import record_audit
@@ -25,12 +25,26 @@ def location_snapshot(location: Location) -> dict[str, Any]:
     }
 
 
+def _not_found(location_id: str) -> NotFoundError:
+    return NotFoundError(f"Location {location_id} was not found.", error_code="location.not_found")
+
+
 def get_location(session: Session, location_id: str) -> Location:
     location = session.get(Location, location_id)
     if location is None:
-        raise NotFoundError(
-            f"Location {location_id} was not found.", error_code="location.not_found"
-        )
+        raise _not_found(location_id)
+    return location
+
+
+def read_location(session: Session, location_id: str, readable: ColumnElement[bool]) -> Location:
+    """The location addressed by ``location_id``, if this request may read it.
+
+    A location under a site the caller holds no grant for answers exactly
+    what a missing one answers.
+    """
+    location = session.scalar(select(Location).where(Location.id == location_id, readable))
+    if location is None:
+        raise _not_found(location_id)
     return location
 
 

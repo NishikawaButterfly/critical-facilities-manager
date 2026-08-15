@@ -179,13 +179,61 @@ notification of anything; the executor types their username.
 - **No time zone support.** Everything is UTC, everywhere, with no display
   preference.
 
-## Reads are not scoped
+## What site-scoped reads still do not cover
 
-Site grants restrict **writes** only. Any valid token — including a viewer's,
-including one with no grants at all — can read every asset, order, procedure,
-permit, incident, test, punch item, audit entry, and evidence file in the whole
-installation, across every site. If a contractor's account must not see another
-client's site, this system will not arrange that.
+Site grants now scope reads as well as writes: a token reads the sites its
+grants cover and nothing else, and an out-of-scope record answers the same 404
+a missing one does. Five edges are worth knowing before you rely on it.
+
+- **A write attempt still distinguishes.** An engineer or admin who tries to
+  write an out-of-scope record gets `403 auth.scope_forbidden`, while an
+  invented id gets 404 — so somebody who may write can confirm that an id
+  exists somewhere. The refusal is explanatory on purpose; a `viewer` token
+  never reaches it, because the role gate refuses their write first.
+- **Installation-wide work is invisible to site-scoped readers in the audit
+  trail.** An entry is shown when the scope recorded at the time of the write
+  is one of your grants, so a change made on your site by somebody holding an
+  installation-wide grant reads as `installation` and does not appear in your
+  view of the trail. The alternative — deciding after the fact which site an
+  old entry "really" belonged to — would rewrite history every time an asset
+  moved. See [The audit trail](14-audit-trail.md#what-you-see-of-the-trail).
+- **Procedures and constraints are readable by everyone, free text included.**
+  They belong to no site by design and the work refers to them, so no grant
+  withholds them. Only a constraint's member assets are filtered to your
+  grants: the structured site-owned part. A procedure's title and steps, and a
+  constraint's name and description, are unstructured text read in full by any
+  authenticated token, and whoever wrote them may have named another site, its
+  equipment, or its people. Nothing checks that and nothing redacts it.
+- **A cross-site constraint names what blocks you, in detail.** Starting an
+  order held up by a `mutual_exclusive_maintenance` constraint is refused with
+  a 409 that carries the **constraint name and id**, the **conflicting order's
+  id and title**, and the **conflicting asset's id** — even when that work sits
+  on a site you cannot read. It is not an opaque reference: the order's title
+  is free text written by somebody else. The refusal has to say what to wait
+  for to be worth anything; if that disclosure matters to you, do not bind
+  assets on different sites into one constraint.
+- **Identical evidence bytes are one stored object, and carry the first
+  upload's declaration.** Content addressing deduplicates by SHA-256 across the
+  whole installation. If the same bytes were first uploaded on another site and
+  are later attached on yours, the object you read reports the `filename`,
+  `content_type`, `uploaded_by` and `created_at` recorded at that first upload
+  — values from a site you cannot otherwise read, and a filename or a username
+  is not nothing. They reach you through the reused evidence object in the
+  attach response; the attachment itself carries no such field. The
+  deduplication flag `content_already_stored`, which says those bytes were
+  already in the store, is recorded in the audit entry written for the
+  attachment — in the trail, not in the response. The bytes themselves, the
+  attachments, and every direct route to the object remain scoped: you reach it
+  only through a record your grants cover. What crosses the boundary is the
+  declaration, not the content or the access. How to resolve that —
+  per-attachment declarations, or scoping the reported one — is an open
+  decision, not a settled behaviour.
+
+## Administration is not site-scoped
+
+Any admin manages users, tokens, and grants anywhere in the installation. Their
+own grants scope their domain reads and writes, not whom they may administer,
+and there is no "administer only this site" role.
 
 ## What is not recorded
 

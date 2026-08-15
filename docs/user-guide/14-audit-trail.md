@@ -82,6 +82,37 @@ would cover the write, so the entry names the narrowest authority that
 justified it. When a write touches two sites — moving an asset — the scope
 recorded is the destination.
 
+## What you see of the trail
+
+The trail is scoped by the same grants as everything else, but it is scoped on
+what each entry *recorded at the time*, not on where the object sits now:
+
+- An **installation-wide grant** shows the whole trail, as before.
+- A **site grant** shows the entries whose `scope` is `site:<that site>`. Every
+  other entry — `installation`, `null`, or another site — is not in your view,
+  and the `total` counts only what you can see.
+
+That rule is stricter than it may look, and deliberately so. An entry marked
+`installation` says which *authority* covered the write, not which site the
+record belonged to: an installation-wide engineer working on your site records
+`installation`, and so does one working on somebody else's. Reading those to
+you would mean deciding, today, which site a past event "really" concerned —
+and an asset that moved between sites last month would drag its old history
+into its new site the moment it arrived. The trail is evidence; it is filtered
+on the evidence it already carries.
+
+The practical consequence, stated exactly: where the work was carried out
+using installation-wide authority only, a reader later limited to one site sees
+**none** of those entries — not a reduced view of them — even though they
+concern that site's own assets, orders and permits. The filter matches the
+authority scope stored on each entry, and `installation` is not `site:<yours>`.
+This is deliberately conservative: the alternative would be to infer a
+historical site from where an entity sits today, which would rewrite the
+meaning of past events every time an asset moved. If
+site-scoped people need site-scoped history, give the people doing the work
+site grants rather than installation-wide ones — the scope label then records
+the site, and it records it permanently.
+
 ## Reading the trail
 
 ### In the web interface

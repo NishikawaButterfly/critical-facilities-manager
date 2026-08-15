@@ -9,10 +9,11 @@
  *      the routes the API actually publishes, so it cannot drift from the
  *      server without the suite failing.
  *   2. The token's role decides whether writes are possible at all
- *      (`viewer` may read everything and change nothing). Site grants - which
- *      sites the token may write to - are readable only with an admin token,
- *      so they are deliberately *not* predicted here: the action is offered,
- *      attempted, and the API's 403 `auth.scope_forbidden` is shown as it came.
+ *      (`viewer` reads and changes nothing). Site grants - which sites the
+ *      token reaches - are readable only with an admin token, so they are
+ *      deliberately *not* predicted here: an order on the board is one the
+ *      token could read, the action is offered, attempted, and the API's 403
+ *      `auth.scope_forbidden` is shown as it came.
  *
  * A completed action updates its card from the order the API returned and the
  * board re-paints from memory. Nothing is re-fetched and the page never

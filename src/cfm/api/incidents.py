@@ -23,6 +23,7 @@ from ..services.incidents import (
     create_corrective_order,
     create_incident,
     get_incident,
+    read_incident,
     transition_incident,
 )
 from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
@@ -54,12 +55,15 @@ def create_incident_endpoint(
 def list_incidents(
     session: SessionDep,
     page: PageDep,
+    access: SiteAccessDep,
+    *,
     asset_id: Annotated[str | None, Query()] = None,
     severity: Annotated[IncidentSeverity | None, Query()] = None,
     status: Annotated[IncidentStatus | None, Query()] = None,
 ) -> Page[IncidentResponse]:
-    query = select(Incident)
-    count_query = select(func.count()).select_from(Incident)
+    readable = access.readable(Incident)
+    query = select(Incident).where(readable)
+    count_query = select(func.count()).select_from(Incident).where(readable)
     if asset_id is not None:
         query = query.where(Incident.asset_id == asset_id)
         count_query = count_query.where(Incident.asset_id == asset_id)
@@ -82,8 +86,10 @@ def list_incidents(
 
 
 @router.get("/{incident_id}", response_model=IncidentResponse)
-def get_incident_endpoint(incident_id: str, session: SessionDep) -> IncidentResponse:
-    return incident_response(get_incident(session, incident_id))
+def get_incident_endpoint(
+    incident_id: str, session: SessionDep, access: SiteAccessDep
+) -> IncidentResponse:
+    return incident_response(read_incident(session, incident_id, access.readable(Incident)))
 
 
 @router.post("/{incident_id}/start-investigation", response_model=IncidentResponse)

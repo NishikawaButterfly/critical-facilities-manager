@@ -15,6 +15,7 @@ from ..services.locations import (
     create_location,
     delete_location,
     get_location,
+    read_location,
     update_location,
 )
 from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
@@ -50,11 +51,13 @@ def create_location_endpoint(
 def list_locations(
     session: SessionDep,
     page: PageDep,
+    access: SiteAccessDep,
     kind: Annotated[LocationKind | None, Query()] = None,
     parent_id: Annotated[str | None, Query()] = None,
 ) -> Page[LocationResponse]:
-    query = select(Location)
-    count_query = select(func.count()).select_from(Location)
+    readable = access.readable(Location)
+    query = select(Location).where(readable)
+    count_query = select(func.count()).select_from(Location).where(readable)
     if kind is not None:
         query = query.where(Location.kind == kind.value)
         count_query = count_query.where(Location.kind == kind.value)
@@ -74,8 +77,10 @@ def list_locations(
 
 
 @router.get("/{location_id}", response_model=LocationResponse)
-def get_location_endpoint(location_id: str, session: SessionDep) -> LocationResponse:
-    return location_response(get_location(session, location_id))
+def get_location_endpoint(
+    location_id: str, session: SessionDep, access: SiteAccessDep
+) -> LocationResponse:
+    return location_response(read_location(session, location_id, access.readable(Location)))
 
 
 @router.patch("/{location_id}", response_model=LocationResponse)

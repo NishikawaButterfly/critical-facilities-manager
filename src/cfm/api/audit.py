@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 from ..models import AuditEntry
 from ..schemas import AuditEntryResponse, Page
-from .deps import PageDep, SessionDep
+from .deps import PageDep, SessionDep, SiteAccessDep
 from .serializers import audit_entry_response
 
 router = APIRouter(prefix="/audit-entries", tags=["audit"])
@@ -19,12 +19,15 @@ router = APIRouter(prefix="/audit-entries", tags=["audit"])
 def list_audit_entries(
     session: SessionDep,
     page: PageDep,
+    access: SiteAccessDep,
+    *,
     entity_type: Annotated[str | None, Query()] = None,
     entity_id: Annotated[str | None, Query()] = None,
     actor: Annotated[str | None, Query()] = None,
 ) -> Page[AuditEntryResponse]:
-    query = select(AuditEntry)
-    count_query = select(func.count()).select_from(AuditEntry)
+    readable = access.readable(AuditEntry)
+    query = select(AuditEntry).where(readable)
+    count_query = select(func.count()).select_from(AuditEntry).where(readable)
     if entity_type is not None:
         query = query.where(AuditEntry.entity_type == entity_type)
         count_query = count_query.where(AuditEntry.entity_type == entity_type)

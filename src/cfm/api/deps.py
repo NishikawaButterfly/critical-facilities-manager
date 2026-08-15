@@ -10,8 +10,11 @@ never do. Role authorization happens at include time: routers sit under a
 dependency that either admits any authenticated reader and restricts writes
 to engineers and admins (domain routes) or requires the admin role outright
 (user and token management). Site authorization happens inside the
-endpoints: once the write's target is loaded, a :class:`cfm.authz.SiteAccess`
-check requires a grant covering the target's site (see :mod:`cfm.authz`).
+endpoints, through one :class:`cfm.authz.SiteAccess` object per request on
+both halves: a write requires a grant covering its target's site once the
+target is loaded, and a read carries the grants into the query, so a listing
+counts and returns only covered rows and an uncovered object answers the 404
+a missing one answers (see :mod:`cfm.authz`).
 """
 
 from __future__ import annotations

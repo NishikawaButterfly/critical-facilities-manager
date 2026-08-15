@@ -7,7 +7,9 @@ Permission in this system has two independent halves:
 - **Your role** says *what kind of thing* you may do.
 - **Your site grants** say *where* you may do it.
 
-Both must allow an operation. Neither applies to reading.
+Both must allow an operation, and both apply to reading as well as to writing.
+Your role decides whether you may read at all; your grants decide which sites'
+records you read.
 
 ## The three roles
 
@@ -16,6 +18,18 @@ Both must allow an operation. Neither applies to reading.
 | `viewer` | yes | no | no |
 | `engineer` | yes | yes | no |
 | `admin` | yes | yes | yes |
+
+"May read" in that table means *may read within your grants*. No role, `admin`
+included, reads a site it holds no grant on — an administrator who needs the
+whole estate holds an installation-wide grant, which is the default every new
+account gets.
+
+That is a scoping rule, not a control over administrators. User, token and
+grant administration stays installation-wide: any admin may change any
+account's grants, including their own coverage, under the existing
+administrative policy. So an admin whose grants cover one site reads one site
+*until they change that* — and the trail records the change. Grants bound what
+a token reaches; they are not a barrier against someone who may edit grants.
 
 There is no fourth role, no per-object permission, and no way to grant one
 engineer the right to approve procedures but not to issue permits. If you can
@@ -28,9 +42,10 @@ that meant "viewer" last year must not silently become something else.
 
 ### What a viewer sees
 
-A viewer reads everything: every asset, order, procedure, permit, incident,
-test, punch item, evidence file, and audit entry, across every site. Reads are
-never scoped. What they cannot do is change anything:
+A viewer reads every kind of record — assets, orders, procedures, permits,
+incidents, tests, punch items, evidence files, audit entries — on the sites
+their grants cover, and nothing at all on the sites they do not. What they
+cannot do is change anything:
 
 ```
 $ curl -X POST -H "Authorization: Bearer $VIEWER_TOKEN" -H "Content-Type: application/json" \
@@ -76,10 +91,11 @@ $ curl -H "Authorization: Bearer $ENGINEER_TOKEN" $API/users
 Creating users, minting and revoking tokens, granting and removing site
 access, and deactivating accounts. An admin also has every engineer power.
 
-## Site grants: where you may write
+## Site grants: where your authority applies
 
-Your role says you may write. Your grants say where. Every write resolves the
-site its target belongs to and requires a grant covering that site.
+Your role says you may act. Your grants say where. Every operation resolves the
+site its target belongs to: a write requires a grant covering that site, and a
+read only ever returns records on sites your grants cover.
 
 How each object resolves to a site:
 
@@ -98,6 +114,27 @@ Three kinds of object belong to no single site — **sites themselves**,
 one document used across the estate; a constraint may span sites; creating or
 deleting a site changes what "scoped" means. None of them can be owned by one
 site, so none of them can be written with only a site-scoped grant.
+
+Reading them is the opposite: because they belong to no site, no site grant can
+withhold them, and any token reads them. That is deliberate rather than an
+oversight. The engineer whose order was refused by a constraint has to be able
+to read the constraint that refused it, and the technician working under a
+permit has to be able to read the procedure it names.
+
+What *is* withheld from a cross-site constraint is its **structured
+site-owned part**: the member assets are listed only where your grants cover
+them, so you do not receive the identifiers of the members on the other site.
+Its **free text is not withheld**. A constraint's `name` and `description` are
+unstructured fields any authenticated token reads in full, and whoever wrote
+them may have named the other site, its equipment, or its people in them —
+nothing checks that, and nothing redacts it. The same is true of a procedure's
+title and steps.
+
+A cross-site constraint can also disclose through a **refusal**. When it blocks
+your order, the 409 names the constraint and the conflicting work so the
+refusal is actionable — and that conflicting work may be on the other site.
+[Known limitations](19-known-limitations.md) lists exactly what that message
+contains.
 
 ### The two grant kinds
 
@@ -156,12 +193,32 @@ Note the error code: `auth.scope_forbidden`, not `auth.forbidden`. The two 403s
 mean different things and call for different fixes — see
 [Error messages explained](17-error-messages.md#403-refused).
 
-Reads still work with no grants at all:
+Reads go the same way. With no grants, the inventory is not merely unwritable,
+it is empty — and the count agrees, because the total describes what you may
+read, not what exists:
 
 ```
 $ curl -H "Authorization: Bearer $CONTRACTOR_TOKEN" "$API/assets?limit=1"
-{"items":[{"id":"4cd1ad3e-...","tag":"UPS-C-01", ... }], "total":7, ...}
+{"items":[], "total":0, "limit":1, "offset":0}
 ```
+
+Asking for one of those assets by id gets the same answer a made-up id gets:
+
+```
+$ curl -H "Authorization: Bearer $CONTRACTOR_TOKEN" $API/assets/4cd1ad3e-...
+{
+  "title": "Resource not found",
+  "status": 404,
+  "detail": "Asset 4cd1ad3e-... was not found.",
+  "error_code": "asset.not_found"
+}
+```
+
+That is on purpose, and it is the point of the whole chapter: a record you have
+no grant for must not be distinguishable from a record that does not exist. A
+403 saying "that asset is on a site you cannot see" would confirm the asset —
+and on a shared installation, the existence of another client's equipment is
+itself something they are paying you not to disclose.
 
 Grant the campus site only:
 
@@ -178,7 +235,8 @@ $ curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: applica
 }
 ```
 
-The incident now succeeds. Creating a procedure still does not, because a
+The incident now succeeds, and so does the read: the campus inventory appears,
+counted to the campus. Creating a procedure still does not work, because a
 procedure belongs to no site:
 
 ```
@@ -189,7 +247,40 @@ procedure belongs to no site:
 }
 ```
 
+Reading that same procedure works, as it must for anyone whose work refers to
+it.
+
 That is the whole mechanism.
+
+### What the scope does not hide
+
+Site scoping is a read boundary over site-owned domain records. It is not a
+guarantee that a token cannot learn another site exists. Four things stay
+outside it, and all four are deliberate:
+
+- **Write-side probing.** A user who may write at all — an engineer or an
+  admin — can tell an out-of-scope id from a made-up one by *attempting a
+  write* on it: a real record on another site answers
+  `403 auth.scope_forbidden`, an invented id answers 404. That refusal is
+  deliberately explanatory, because it is what tells an engineer who mistyped
+  an id, or whose grants were narrowed this morning, what actually happened. A
+  `viewer` never reaches the distinction, because the role gate refuses the
+  write first — but that closes this one channel, not the three below.
+- **Installation-scoped free text.** Procedure titles and steps, and
+  constraint names and descriptions, are readable by every authenticated token
+  and may name another site, its equipment or its people. No role restricts
+  them and nothing redacts them.
+- **Cross-site constraint refusals.** A 409 from a constraint names the
+  conflicting work, which may live on a site you cannot read. See
+  [Known limitations](19-known-limitations.md).
+- **Evidence declaration metadata.** When identical bytes are uploaded on two
+  sites, the stored declaration is the one from the first upload. See
+  [Evidence](13-evidence.md).
+
+So: reads of site-owned records are scoped, and a token is not told what it
+may not read. If your requirement is that an account must not be able to learn
+that another site exists at all, this release does not provide it — a separate
+installation does.
 
 ## Administration tasks
 

@@ -11,7 +11,7 @@ from ..authz import site_of_location_id
 from ..domain import AssetCriticality, AssetStatus
 from ..models import Asset
 from ..schemas import AssetCreate, AssetResponse, AssetTransition, AssetUpdate, Page
-from ..services.assets import create_asset, get_asset, transition_asset, update_asset
+from ..services.assets import create_asset, get_asset, read_asset, transition_asset, update_asset
 from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
 from .serializers import asset_response
 
@@ -43,14 +43,16 @@ def create_asset_endpoint(
 def list_assets(
     session: SessionDep,
     page: PageDep,
+    access: SiteAccessDep,
     *,
     location_id: Annotated[str | None, Query()] = None,
     site_id: Annotated[str | None, Query()] = None,
     status: Annotated[AssetStatus | None, Query()] = None,
     criticality: Annotated[AssetCriticality | None, Query()] = None,
 ) -> Page[AssetResponse]:
-    query = select(Asset)
-    count_query = select(func.count()).select_from(Asset)
+    readable = access.readable(Asset)
+    query = select(Asset).where(readable)
+    count_query = select(func.count()).select_from(Asset).where(readable)
     if location_id is not None:
         query = query.where(Asset.location_id == location_id)
         count_query = count_query.where(Asset.location_id == location_id)
@@ -76,8 +78,8 @@ def list_assets(
 
 
 @router.get("/{asset_id}", response_model=AssetResponse)
-def get_asset_endpoint(asset_id: str, session: SessionDep) -> AssetResponse:
-    return asset_response(get_asset(session, asset_id))
+def get_asset_endpoint(asset_id: str, session: SessionDep, access: SiteAccessDep) -> AssetResponse:
+    return asset_response(read_asset(session, asset_id, access.readable(Asset)))
 
 
 @router.patch("/{asset_id}", response_model=AssetResponse)

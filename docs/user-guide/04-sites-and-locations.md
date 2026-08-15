@@ -206,11 +206,13 @@ authority:
 - Orders, permits, incidents, tests, and punch items inherit the site of the
   asset or location they concern.
 - A write is allowed only if you hold a grant on that site, or an
-  installation-wide grant.
+  installation-wide grant, and a read only returns what those same grants
+  cover: a location under a site you hold no grant on is not in your tree and
+  answers 404 when asked for by id.
 
 This is why creating and deleting sites is restricted to installation-wide
 holders, and why a site cannot be deleted while grants still name it. See
-[Roles and permissions](03-roles-and-permissions.md#site-grants-where-you-may-write).
+[Roles and permissions](03-roles-and-permissions.md#site-grants-where-your-authority-applies).
 
 ---
 

@@ -17,7 +17,7 @@ from ..schemas import (
     WorkPermitResponse,
     WorkPermitRevoke,
 )
-from ..services.permits import create_permit, get_permit, transition_permit
+from ..services.permits import create_permit, get_permit, read_permit, transition_permit
 from .deps import ActorDep, PageDep, SessionDep, SiteAccessDep
 from .serializers import work_permit_response
 
@@ -46,11 +46,13 @@ def create_permit_endpoint(
 def list_permits(
     session: SessionDep,
     page: PageDep,
+    access: SiteAccessDep,
     order_id: Annotated[str | None, Query()] = None,
     status: Annotated[WorkPermitStatus | None, Query()] = None,
 ) -> Page[WorkPermitResponse]:
-    query = select(WorkPermit)
-    count_query = select(func.count()).select_from(WorkPermit)
+    readable = access.readable(WorkPermit)
+    query = select(WorkPermit).where(readable)
+    count_query = select(func.count()).select_from(WorkPermit).where(readable)
     if order_id is not None:
         query = query.where(WorkPermit.order_id == order_id)
         count_query = count_query.where(WorkPermit.order_id == order_id)
@@ -70,8 +72,10 @@ def list_permits(
 
 
 @router.get("/{permit_id}", response_model=WorkPermitResponse)
-def get_permit_endpoint(permit_id: str, session: SessionDep) -> WorkPermitResponse:
-    return work_permit_response(get_permit(session, permit_id))
+def get_permit_endpoint(
+    permit_id: str, session: SessionDep, access: SiteAccessDep
+) -> WorkPermitResponse:
+    return work_permit_response(read_permit(session, permit_id, access.readable(WorkPermit)))
 
 
 @router.post("/{permit_id}/issue", response_model=WorkPermitResponse)
