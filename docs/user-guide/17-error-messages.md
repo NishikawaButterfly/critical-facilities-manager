@@ -198,6 +198,17 @@ token is no substitute — the check is on the username, not the role.
 being out at once. Find the named order, and either wait for it, complete it, or
 cancel it. See [Operational constraints](09-operational-constraints.md).
 
+If the blocking order is on a site your grants do not cover, the same code
+comes back with a message that names the constraint and nothing else:
+
+```
+{"error_code":"maintenance_order.mutual_exclusion_conflict",
+ "detail":"Constraint 'UPS redundancy pair' (586b0568-…) allows only one of its member assets under maintenance at a time; another member asset, on a site your grants do not cover, already has an order in progress. That order is not named here because you may not read it: wait for it to finish, or ask somebody whose grants reach that site."}
+```
+
+There is nothing to look up: ask somebody who holds a grant on the other site,
+or read the constraint — which you may always read — to find out who that is.
+
 ### Open work blocking closure
 
 ```

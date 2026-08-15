@@ -82,8 +82,14 @@ asset already has an order in progress, the start is refused:
 ```
 
 The message names the constraint, the conflicting order, its title, and the
-asset — everything you need to go and ask whether that work can wait. See
-[Operational constraints](09-operational-constraints.md).
+asset — everything you need to go and ask whether that work can wait.
+
+**Unless you could not have read that order.** When the blocking work sits on a
+site your grants do not cover, the same 409 with the same `error_code` names
+the constraint and says only that a member asset outside your grants is under
+maintenance: no order id, no title, no asset id. A refusal does not hand over
+what a `GET` on that order would have refused you. See
+[Operational constraints](09-operational-constraints.md#when-the-blocking-order-is-on-a-site-you-cannot-read).
 
 **Starting does not require a work permit.** An order with no permit at all, or
 with a permit still sitting at `requested`, starts perfectly happily. If your

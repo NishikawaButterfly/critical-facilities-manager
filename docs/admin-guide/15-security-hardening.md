@@ -84,11 +84,12 @@ account — and one who should not see a client's site simply is not granted it.
 
 Scoping reads is not the same as isolating a tenant. Site grants bound which
 site-owned records a token reads; they do not stop it learning that another
-site exists. Procedure and constraint free text is readable by every token, a
-cross-site constraint refusal names the work that blocks you, evidence
-declarations follow the first upload of identical bytes, and an engineer can
-probe an id through a write refusal. If a client must be unable to observe
-another client at all, run separate installations rather than separate grants.
+site exists. Procedure and constraint free text is readable by every token,
+evidence declarations follow the first upload of identical bytes, and an
+engineer can probe an id through a write refusal. A cross-site constraint
+refusal no longer names the blocking work unless the caller's grants would
+have let them read it. If a client must be unable to observe another client at
+all, run separate installations rather than separate grants.
 
 ## 5. Close the documentation endpoints
 
