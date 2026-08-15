@@ -183,8 +183,10 @@ State it to whoever is accepting the risk:
 - No site-scoped administration: any admin manages users, tokens, and grants
   anywhere, whatever their own grants cover.
 - An engineer or admin can still confirm that an out-of-scope id exists by
-  attempting a write on it (403 rather than 404); reads disclose nothing, and a
-  viewer token never reaches the distinction.
+  attempting a write on it (403 rather than 404); a viewer token never reaches
+  that distinction. What the read path guarantees is narrower than silence: a
+  direct read does not distinguish an out-of-scope site-owned record from a
+  missing one. The cross-site channels listed above are outside that guarantee.
 - No encryption at rest for evidence, and no integrity protection for the
   database beyond the append-only triggers.
 - No shared rate limiting across processes.

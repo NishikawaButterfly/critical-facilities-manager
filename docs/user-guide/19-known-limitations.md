@@ -218,13 +218,16 @@ a missing one does. Five edges are worth knowing before you rely on it.
   are later attached on yours, the object you read reports the `filename`,
   `content_type`, `uploaded_by` and `created_at` recorded at that first upload
   — values from a site you cannot otherwise read, and a filename or a username
-  is not nothing. The upload response also reports `content_already_stored`,
-  which tells you those bytes already existed somewhere in the installation.
-  The bytes themselves, the attachments, and every direct route to the object
-  remain scoped: you reach it only through a record your grants cover. What
-  crosses the boundary is the declaration, not the content or the access. How
-  to resolve that — per-attachment declarations, or scoping the reported one —
-  is an open decision, not a settled behaviour.
+  is not nothing. They reach you through the reused evidence object in the
+  attach response; the attachment itself carries no such field. The
+  deduplication flag `content_already_stored`, which says those bytes were
+  already in the store, is recorded in the audit entry written for the
+  attachment — in the trail, not in the response. The bytes themselves, the
+  attachments, and every direct route to the object remain scoped: you reach it
+  only through a record your grants cover. What crosses the boundary is the
+  declaration, not the content or the access. How to resolve that —
+  per-attachment declarations, or scoping the reported one — is an open
+  decision, not a settled behaviour.
 
 ## Administration is not site-scoped
 

@@ -65,8 +65,9 @@ describes what the platform is and how it is built.
   where grants cover them; their free text is not filtered, and a cross-site
   constraint's refusal names the work that blocks you. Scoped reads are a
   boundary over site-owned records, not tenant isolation — see
-  [Known limitations](docs/user-guide/19-known-limitations.md). Moving an asset across sites requires authority over
-  both. Every audit entry records the scope that covered the write
+  [Known limitations](docs/user-guide/19-known-limitations.md). Moving an asset
+  across sites requires authority over both. Every audit entry records the
+  scope that covered the write
   (`installation` or `site:<id>`), and that stored label is what filters the
   trail on the way out, so history is never reinterpreted from an entity's
   current site.

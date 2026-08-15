@@ -24,6 +24,13 @@ included, reads a site it holds no grant on — an administrator who needs the
 whole estate holds an installation-wide grant, which is the default every new
 account gets.
 
+That is a scoping rule, not a control over administrators. User, token and
+grant administration stays installation-wide: any admin may change any
+account's grants, including their own coverage, under the existing
+administrative policy. So an admin whose grants cover one site reads one site
+*until they change that* — and the trail records the change. Grants bound what
+a token reaches; they are not a barrier against someone who may edit grants.
+
 There is no fourth role, no per-object permission, and no way to grant one
 engineer the right to approve procedures but not to issue permits. If you can
 write at all, you can run every workflow operation your grants reach.

@@ -170,10 +170,13 @@ the whole installation, and the stored `filename`, `content_type`,
 those bytes. If a file was first uploaded on another site and the same bytes
 are later attached on yours, the object you legitimately read reports that
 first upload's declaration — a filename and a username from a site you cannot
-otherwise read. The upload response also carries `content_already_stored`,
-which reveals that identical bytes already existed somewhere in the
-installation. Neither is content and neither grants access, but both are
-information crossing the site boundary; see
+otherwise read — it reaches you through the reused `evidence_object` in the
+attach response, not through any field of the attachment itself. Separately,
+the audit entry written for the attachment records
+`content_already_stored`, which says whether identical bytes were already in
+the store; that flag lives in the trail, not in the attach response. Neither
+is content and neither grants access, but both are information crossing the
+site boundary; see
 [Known limitations](19-known-limitations.md). Whether the declaration should
 be recorded per attachment instead is an open decision.
 
