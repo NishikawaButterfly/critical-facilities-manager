@@ -112,10 +112,22 @@ Reading them is the opposite: because they belong to no site, no site grant can
 withhold them, and any token reads them. That is deliberate rather than an
 oversight. The engineer whose order was refused by a constraint has to be able
 to read the constraint that refused it, and the technician working under a
-permit has to be able to read the procedure it names. What *is* withheld is the
-site-owned part: a constraint's member assets are listed only where your grants
-cover them, so a cross-site constraint shows you your own side of it and gives
-away nothing about the other.
+permit has to be able to read the procedure it names.
+
+What *is* withheld from a cross-site constraint is its **structured
+site-owned part**: the member assets are listed only where your grants cover
+them, so you do not receive the identifiers of the members on the other site.
+Its **free text is not withheld**. A constraint's `name` and `description` are
+unstructured fields any authenticated token reads in full, and whoever wrote
+them may have named the other site, its equipment, or its people in them —
+nothing checks that, and nothing redacts it. The same is true of a procedure's
+title and steps.
+
+A cross-site constraint can also disclose through a **refusal**. When it blocks
+your order, the 409 names the constraint and the conflicting work so the
+refusal is actionable — and that conflicting work may be on the other site.
+[Known limitations](19-known-limitations.md) lists exactly what that message
+contains.
 
 ### The two grant kinds
 
@@ -233,17 +245,35 @@ it.
 
 That is the whole mechanism.
 
-### One thing the scope does not hide
+### What the scope does not hide
 
-A user who may write at all — an engineer or an admin — can still tell an
-out-of-scope id from a made-up one by *attempting a write* on it: a real record
-on another site answers `403 auth.scope_forbidden`, an invented id answers 404.
-That refusal is deliberately explanatory, because it is what tells an engineer
-who mistyped an id, or whose grants were narrowed this morning, what actually
-happened. Reads leak nothing either way, and a viewer never reaches the
-distinction at all — the role gate refuses their write first. If you are
-handing a token to somebody who must not learn that another site exists, give
-them the `viewer` role.
+Site scoping is a read boundary over site-owned domain records. It is not a
+guarantee that a token cannot learn another site exists. Four things stay
+outside it, and all four are deliberate:
+
+- **Write-side probing.** A user who may write at all — an engineer or an
+  admin — can tell an out-of-scope id from a made-up one by *attempting a
+  write* on it: a real record on another site answers
+  `403 auth.scope_forbidden`, an invented id answers 404. That refusal is
+  deliberately explanatory, because it is what tells an engineer who mistyped
+  an id, or whose grants were narrowed this morning, what actually happened. A
+  `viewer` never reaches the distinction, because the role gate refuses the
+  write first — but that closes this one channel, not the three below.
+- **Installation-scoped free text.** Procedure titles and steps, and
+  constraint names and descriptions, are readable by every authenticated token
+  and may name another site, its equipment or its people. No role restricts
+  them and nothing redacts them.
+- **Cross-site constraint refusals.** A 409 from a constraint names the
+  conflicting work, which may live on a site you cannot read. See
+  [Known limitations](19-known-limitations.md).
+- **Evidence declaration metadata.** When identical bytes are uploaded on two
+  sites, the stored declaration is the one from the first upload. See
+  [Evidence](13-evidence.md).
+
+So: reads of site-owned records are scoped, and a token is not told what it
+may not read. If your requirement is that an account must not be able to learn
+that another site exists at all, this release does not provide it — a separate
+installation does.
 
 ## Administration tasks
 

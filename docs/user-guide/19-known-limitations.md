@@ -197,19 +197,34 @@ a missing one does. Five edges are worth knowing before you rely on it.
   view of the trail. The alternative — deciding after the fact which site an
   old entry "really" belonged to — would rewrite history every time an asset
   moved. See [The audit trail](14-audit-trail.md#what-you-see-of-the-trail).
-- **Procedures and constraints are readable by everyone.** They belong to no
-  site by design, and the work refers to them; only a constraint's member
-  assets are filtered to your grants.
-- **Identical evidence bytes are one stored object.** Content addressing
-  deduplicates, so if the same file is attached on two sites, the recorded
-  filename and uploader are the ones from the first upload, whichever site that
-  was. You still only reach the object through a record you may read.
-- **A cross-site constraint names what blocks you.** Starting an order held up
-  by a `mutual_exclusive_maintenance` constraint is refused with a 409 naming
-  the conflicting order and its asset, even when they sit on a site you cannot
-  read. The refusal has to say what to wait for to be worth anything; if that
-  disclosure matters to you, do not bind assets on different sites into one
-  constraint.
+- **Procedures and constraints are readable by everyone, free text included.**
+  They belong to no site by design and the work refers to them, so no grant
+  withholds them. Only a constraint's member assets are filtered to your
+  grants: the structured site-owned part. A procedure's title and steps, and a
+  constraint's name and description, are unstructured text read in full by any
+  authenticated token, and whoever wrote them may have named another site, its
+  equipment, or its people. Nothing checks that and nothing redacts it.
+- **A cross-site constraint names what blocks you, in detail.** Starting an
+  order held up by a `mutual_exclusive_maintenance` constraint is refused with
+  a 409 that carries the **constraint name and id**, the **conflicting order's
+  id and title**, and the **conflicting asset's id** — even when that work sits
+  on a site you cannot read. It is not an opaque reference: the order's title
+  is free text written by somebody else. The refusal has to say what to wait
+  for to be worth anything; if that disclosure matters to you, do not bind
+  assets on different sites into one constraint.
+- **Identical evidence bytes are one stored object, and carry the first
+  upload's declaration.** Content addressing deduplicates by SHA-256 across the
+  whole installation. If the same bytes were first uploaded on another site and
+  are later attached on yours, the object you read reports the `filename`,
+  `content_type`, `uploaded_by` and `created_at` recorded at that first upload
+  — values from a site you cannot otherwise read, and a filename or a username
+  is not nothing. The upload response also reports `content_already_stored`,
+  which tells you those bytes already existed somewhere in the installation.
+  The bytes themselves, the attachments, and every direct route to the object
+  remain scoped: you reach it only through a record your grants cover. What
+  crosses the boundary is the declaration, not the content or the access. How
+  to resolve that — per-attachment declarations, or scoping the reported one —
+  is an open decision, not a settled behaviour.
 
 ## Administration is not site-scoped
 

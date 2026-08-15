@@ -163,6 +163,20 @@ behind it. An evidence object attached to several records is readable as soon
 as **one** of them is a record you may read, which is what keeps deduplicated
 bytes usable to everyone entitled to them.
 
+That covers the bytes, the attachments and every direct route to an object.
+It does not cover the **declaration**. Deduplication is by content hash across
+the whole installation, and the stored `filename`, `content_type`,
+`uploaded_by` and `created_at` are the ones recorded at the *first* upload of
+those bytes. If a file was first uploaded on another site and the same bytes
+are later attached on yours, the object you legitimately read reports that
+first upload's declaration — a filename and a username from a site you cannot
+otherwise read. The upload response also carries `content_already_stored`,
+which reveals that identical bytes already existed somewhere in the
+installation. Neither is content and neither grants access, but both are
+information crossing the site boundary; see
+[Known limitations](19-known-limitations.md). Whether the declaration should
+be recorded per attachment instead is an open decision.
+
 ## Downloading and verifying
 
 Fetch metadata by object id:

@@ -108,7 +108,11 @@ retire constraints — but reads every one of them, because a constraint is what
 refuses their work and they have to be able to look it up. The membership is
 the part that is site-owned: `asset_ids` lists only the members on sites your
 grants cover, and filtering the list by an asset you cannot read matches
-nothing. A cross-site constraint therefore shows each side its own members.
+nothing. So each side sees its own members — but only the *membership* is
+filtered. The `name` and `description` are free text every authenticated token
+reads in full, and a refusal from this constraint names the conflicting order
+and asset even when they sit on the other side (see
+[Known limitations](19-known-limitations.md)).
 
 **Members cannot be added or removed afterwards.** A constraint is created and
 retired, never edited — not its name, not its description, not its membership.

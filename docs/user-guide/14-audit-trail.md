@@ -101,8 +101,14 @@ and an asset that moved between sites last month would drag its old history
 into its new site the moment it arrived. The trail is evidence; it is filtered
 on the evidence it already carries.
 
-The practical consequence: on an installation where most work is done under
-installation-wide grants, a site-scoped account sees little of the trail. If
+The practical consequence, stated exactly: where the work was carried out
+using installation-wide authority only, a reader later limited to one site sees
+**none** of those entries — not a reduced view of them — even though they
+concern that site's own assets, orders and permits. The filter matches the
+authority scope stored on each entry, and `installation` is not `site:<yours>`.
+This is deliberately conservative: the alternative would be to infer a
+historical site from where an entity sits today, which would rewrite the
+meaning of past events every time an asset moved. If
 site-scoped people need site-scoped history, give the people doing the work
 site grants rather than installation-wide ones — the scope label then records
 the site, and it records it permanently.

@@ -82,6 +82,14 @@ cover and no others, exactly like anybody else. An administrator who needs to
 see the whole estate holds an installation-wide grant — the default for a new
 account — and one who should not see a client's site simply is not granted it.
 
+Scoping reads is not the same as isolating a tenant. Site grants bound which
+site-owned records a token reads; they do not stop it learning that another
+site exists. Procedure and constraint free text is readable by every token, a
+cross-site constraint refusal names the work that blocks you, evidence
+declarations follow the first upload of identical bytes, and an engineer can
+probe an id through a write refusal. If a client must be unable to observe
+another client at all, run separate installations rather than separate grants.
+
 ## 5. Close the documentation endpoints
 
 `CFM_DOCS_ENABLED=false` turns `/docs`, `/redoc`, and `/openapi.json` into
