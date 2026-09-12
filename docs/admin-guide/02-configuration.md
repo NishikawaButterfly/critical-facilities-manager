@@ -42,7 +42,7 @@ never warns. Check the effect, not the spelling.
 | `CFM_TRUSTED_PROXY` | `false` | Attribute failures to the rightmost `X-Forwarded-For` entry. While it is `false`, requests carrying that header share one lockout bucket. Read [Running behind a reverse proxy](09-reverse-proxy.md) before leaving it or setting it. |
 | `CFM_API_PREFIX` | `/api/v1` | Path every API route hangs under. |
 | `CFM_APP_NAME` | `Critical Facilities Manager API` | Title in the OpenAPI document, and the heading and browser title of the frontend. |
-| `CFM_APP_VERSION` | `0.2.0` | Version string reported by `/health`, `/docs`, and `/ui/config.json`. |
+| `CFM_APP_VERSION` | `0.3.0` | Version string reported by `/health`, `/docs`, and `/ui/config.json`. |
 
 The last two are cosmetic with one sharp edge, covered under
 [Settings that can lie to you](#settings-that-can-lie-to-you).

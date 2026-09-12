@@ -26,7 +26,7 @@ site
 The rule is strict adjacency. You cannot put a room directly under a building
 to skip an unnamed floor, and you cannot nest a site inside a site to model a
 campus of campuses. If your estate does not fit, the honest answer is that
-version 0.2.0 will not model it; see
+this version will not model it; see
 [Known limitations](19-known-limitations.md).
 
 **Assets, however, may hang from any level.** In the demo campus the standby

@@ -97,7 +97,7 @@ Corrections are made by adding records, never by rewriting them. See
 
 ## The interface, honestly
 
-Version 0.2.0 ships two ways in:
+This version ships two ways in:
 
 - **A web page** at `/ui/`, with three read-oriented views and exactly one kind
   of write: moving a maintenance order through its states. It is described in

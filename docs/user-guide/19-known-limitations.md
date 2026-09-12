@@ -2,7 +2,7 @@
 
 [← Troubleshooting](18-troubleshooting.md) · [Manual index](README.md) · [Next: Glossary →](20-glossary.md)
 
-Everything version 0.2.0 does not do, collected in one place. Nothing here is a
+Everything this version does not do, collected in one place. Nothing here is a
 defect — these are boundaries, and knowing them before you commit an estate to
 the system is worth more than discovering them afterwards.
 

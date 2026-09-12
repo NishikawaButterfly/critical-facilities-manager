@@ -125,7 +125,7 @@ Filters:
 **There is no filter on `tag` and no text search anywhere in the product.** To
 find `UPS-C-01` when you know only its tag, you list the site's assets and look
 — which is what the examples in this manual do. It is the single most keenly
-felt gap in version 0.2.0; see
+felt gap in this version; see
 [Known limitations](19-known-limitations.md).
 
 Fetch one directly when you have its id:

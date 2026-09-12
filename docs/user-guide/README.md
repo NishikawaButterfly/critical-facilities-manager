@@ -1,6 +1,9 @@
 # Critical Facilities Manager — User Manual
 
-**Documents version 0.2.0.**
+**Documents version 0.3.0.** Example output was captured between 2026-08-13
+and 2026-08-15, before the release was cut, and has not been re-captured, so
+version strings in it read 0.2.0. The chapters were revised for 0.3.0's read
+scoping and constraint refusals.
 
 This manual explains what you can do with Critical Facilities Manager and how
 to perform each operation correctly. It assumes you have never seen the source
@@ -58,7 +61,7 @@ one to read if you only read one: it walks complete jobs from beginning to end.
 | 16 | [Common workflows](16-common-workflows.md) | Complete end-to-end runs |
 | 17 | [Error messages explained](17-error-messages.md) | 401, 403, 404, 409, 413, 422, 429 in this system's terms |
 | 18 | [Troubleshooting](18-troubleshooting.md) | When something does not behave as this manual says |
-| 19 | [Known limitations](19-known-limitations.md) | What version 0.2.0 cannot do |
+| 19 | [Known limitations](19-known-limitations.md) | What this version cannot do |
 | 20 | [Glossary](20-glossary.md) | Every term, defined once |
 
 ## About the examples
