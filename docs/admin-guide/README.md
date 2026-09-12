@@ -1,6 +1,9 @@
 # Critical Facilities Manager — Administrator and Deployment Guide
 
-**Documents version 0.2.0.**
+**Documents version 0.3.0.** Example output was captured between 2026-08-13
+and 2026-08-15, before the release was cut, and has not been re-captured, so
+version strings in it read 0.2.0. The chapters were revised for 0.3.0's read
+scoping, constraint refusals and forwarded-address counting.
 
 This guide is for whoever installs the software, configures it, holds the
 database credentials, and gets called when it will not start. It covers
