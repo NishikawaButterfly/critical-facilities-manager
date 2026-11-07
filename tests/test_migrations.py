@@ -13,23 +13,40 @@ Normalisations applied before comparing (each is benign):
 Everything else — table set, column names, compiled column types,
 nullability, server defaults, primary keys, and named indexes — must match
 exactly.
+
+The tests at the end of the module are about what a run of the chain
+guarantees rather than what it builds: a run is one transaction, so a
+failure anywhere in it leaves the schema and the revision stamp where the
+run started. Those that take ``database_url`` follow the session's database,
+SQLite by default and the PostgreSQL server in CI's PostgreSQL job, because
+the guarantee has to hold on both. Those that need a failure inject a
+failing revision after head into a copy of the packaged scripts, so the
+``env.py`` under test is always the one in this tree.
 """
 
 from __future__ import annotations
 
+import io
+import shutil
+from contextlib import ExitStack
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
 from alembic import command
 from alembic.autogenerate import compare_metadata
+from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
-from sqlalchemy import Engine, inspect, text
+from alembic.util import CommandError
+from sqlalchemy import Connection, Engine, create_engine, event, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from cfm.config import Settings
 from cfm.database import Base, build_engine
 from cfm.main import create_app
 from cfm.migrate import (
+    SCRIPTS_PATH,
     SchemaOutOfDateError,
     build_alembic_config,
     current_revision,
@@ -241,3 +258,359 @@ def test_ensure_fresh_schema_refuses_a_pre_migration_database(tmp_path: Path) ->
         engine.dispose()
     with pytest.raises(SchemaOutOfDateError, match="alembic stamp 0001"):
         ensure_fresh_schema(url)
+
+
+# --- A run of the chain is one transaction ---------------------------------
+
+INJECTED_REVISION = "injected"
+
+_INJECTED_SCRIPT = '''"""Injected by tests/test_migrations.py: it fails after issuing DDL.
+
+Revision ID: {revision}
+Revises: {down_revision}
+"""
+
+from __future__ import annotations
+
+import sqlalchemy as sa
+from alembic import op
+
+revision = {revision!r}
+down_revision = {down_revision!r}
+branch_labels = None
+depends_on = None
+
+
+def upgrade() -> None:
+{body}
+
+
+def downgrade() -> None:
+    pass
+'''
+
+_ADD_A_COLUMN = 'op.add_column("audit_entries", sa.Column("injected_note", sa.Text()))'
+_CREATE_A_TABLE = (
+    'op.create_table("injected_table", sa.Column("id", sa.Integer(), primary_key=True))'
+)
+_RAISE = 'raise RuntimeError("injected failure after DDL")'
+
+
+def _scripts_with_a_revision_after_head(tmp_path: Path, statements: tuple[str, ...]) -> Path:
+    """A copy of the packaged scripts, ``env.py`` included, plus one revision after head."""
+    scripts = tmp_path / "migrations"
+    shutil.copytree(SCRIPTS_PATH, scripts, ignore=shutil.ignore_patterns("__pycache__"))
+    script = _INJECTED_SCRIPT.format(
+        revision=INJECTED_REVISION,
+        down_revision=head_revision(),
+        body="\n".join(f"    {statement}" for statement in statements),
+    )
+    (scripts / "versions" / f"{INJECTED_REVISION}.py").write_text(script, encoding="utf-8")
+    return scripts
+
+
+def _injected_config(scripts: Path, url: str) -> Config:
+    config = build_alembic_config(url)
+    config.set_main_option("script_location", str(scripts))
+    return config
+
+
+def _table_names(url: str) -> list[str]:
+    engine = build_engine(url)
+    try:
+        return inspect(engine).get_table_names()
+    finally:
+        engine.dispose()
+
+
+@dataclass(frozen=True)
+class _DatabaseState:
+    stamp: str | None
+    schema: dict[str, Any]
+    triggers: frozenset[str]
+    rows: dict[str, int]
+
+
+def _database_state(url: str) -> _DatabaseState:
+    """Stamp, schema, triggers and row counts: everything a failed run must leave alone."""
+    engine = build_engine(url)
+    try:
+        schema = _schema_snapshot(engine)
+        trigger_query = (
+            "SELECT tgname FROM pg_trigger WHERE NOT tgisinternal"
+            if engine.dialect.name == "postgresql"
+            else "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+        )
+        with engine.connect() as connection:
+            triggers = frozenset(connection.execute(text(trigger_query)).scalars())
+            rows = {
+                # Table names come from the inspected schema, never from input.
+                table: connection.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one()  # noqa: S608
+                for table in schema
+            }
+    finally:
+        engine.dispose()
+    return _DatabaseState(current_revision(url), schema, triggers, rows)
+
+
+def _seed_a_site(url: str) -> None:
+    """One location row whose parent_id is NULL, as every site's is."""
+    engine = build_engine(url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO locations (id, kind, code, name, parent_id, created_at,"
+                    " updated_at) VALUES ('site-a', 'site', 'CAMP-A', 'Campus A', NULL,"
+                    " '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+                )
+            )
+    finally:
+        engine.dispose()
+
+
+def _transactional_engine(url: str) -> Engine:
+    """An engine whose transactions are real ones on either database.
+
+    PostgreSQL connections already behave so. On SQLite this is the recipe in
+    SQLAlchemy's SQLite dialect documentation: the sqlite3 driver is told to
+    issue no BEGIN of its own, and the engine emits BEGIN whenever a
+    transaction starts.
+    """
+    engine = build_engine(url)
+    if engine.dialect.name == "sqlite":
+
+        @event.listens_for(engine, "connect")
+        def _leave_transactions_to_sqlalchemy(dbapi_connection: Any, _record: Any) -> None:
+            dbapi_connection.isolation_level = None
+
+        @event.listens_for(engine, "begin")
+        def _begin(connection: Connection) -> None:
+            connection.exec_driver_sql("BEGIN")
+
+    return engine
+
+
+@pytest.mark.parametrize(
+    ("statements", "error", "message"),
+    [
+        pytest.param(
+            (_ADD_A_COLUMN, _CREATE_A_TABLE, _RAISE),
+            RuntimeError,
+            "injected failure after DDL",
+            id="after-ddl",
+        ),
+        pytest.param(
+            (
+                _CREATE_A_TABLE,
+                'with op.batch_alter_table("locations") as batch_op:',
+                '    batch_op.alter_column("parent_id", existing_type=sa.String(36),'
+                " nullable=False)",
+            ),
+            IntegrityError,
+            "parent_id",
+            id="inside-a-batch-rebuild",
+        ),
+        pytest.param(
+            (_CREATE_A_TABLE, 'op.execute("DELETE FROM alembic_version")'),
+            CommandError,
+            "expected to match one row",
+            id="while-stamping",
+        ),
+    ],
+)
+def test_a_failing_revision_leaves_the_schema_where_the_run_started(
+    database_url: str,
+    tmp_path: Path,
+    statements: tuple[str, ...],
+    error: type[Exception],
+    message: str,
+) -> None:
+    """A revision that fails takes everything it did with it, and the stamp stays.
+
+    Three places a revision can fail once it has issued DDL: in its own code;
+    inside a batch rebuild, which on SQLite creates a copy of the table, fills
+    it and swaps it in, refused here by a row the tightened column cannot
+    hold; and while the new revision is being recorded, here because the
+    revision removed the stamp row that recording updates. Each time the
+    database must come out exactly as the run found it: the same tables,
+    columns, indexes and constraints, the same triggers, the same number of
+    rows in every table and the same stamp. On SQLite the DDL a revision
+    issued before its first statement that changed data used to be kept, so
+    a second attempt failed on what the first had left behind.
+    """
+    start = head_revision()
+    assert start is not None
+    config = _injected_config(
+        _scripts_with_a_revision_after_head(tmp_path, statements), database_url
+    )
+    command.upgrade(config, start)
+    _seed_a_site(database_url)
+    before = _database_state(database_url)
+
+    with pytest.raises(error, match=message):
+        command.upgrade(config, "head")
+
+    after = _database_state(database_url)
+    left_behind = sorted(set(after.schema) - set(before.schema))
+    assert not left_behind, f"the failed run left tables behind: {left_behind}"
+    assert after == before
+
+
+@pytest.mark.parametrize("handed", [False, True], ids=["own-connection", "handed-connection"])
+def test_a_failing_run_rolls_back_every_revision_it_applied(
+    database_url: str, tmp_path: Path, handed: bool
+) -> None:
+    """A run from an empty database that fails at its last revision leaves it empty.
+
+    No stamp and no tables: the revisions that succeeded are undone with the
+    one that failed, whether the migrations open their own connection or are
+    handed one whose transactions are real. SQLite used to commit after each
+    revision even on such a connection, so the database came out stamped at
+    the last revision that had succeeded.
+    """
+    scripts = _scripts_with_a_revision_after_head(
+        tmp_path, (_ADD_A_COLUMN, _CREATE_A_TABLE, _RAISE)
+    )
+    config = _injected_config(scripts, database_url)
+    with ExitStack() as stack:
+        if handed:
+            engine = _transactional_engine(database_url)
+            stack.callback(engine.dispose)
+            config.attributes["connection"] = stack.enter_context(engine.connect())
+        with pytest.raises(RuntimeError, match="injected failure after DDL"):
+            command.upgrade(config, "head")
+
+    assert current_revision(database_url) is None
+    assert _table_names(database_url) == []
+
+
+def test_an_sqlite_connection_without_explicit_transactions_is_refused(tmp_path: Path) -> None:
+    """A connection left to the sqlite3 driver's own transaction handling is refused.
+
+    That handling, the driver's default and what the application's engine
+    keeps, opens a transaction only before a statement that changes data, so
+    DDL issued earlier is committed at once and a failed run could leave it
+    behind. The refusal comes before any revision runs.
+    """
+    url = _sqlite_url(tmp_path, "handed.db")
+    engine = build_engine(url)
+    try:
+        with engine.connect() as connection:
+            config = build_alembic_config(url)
+            config.attributes["connection"] = connection
+            with pytest.raises(CommandError, match="not inside a database transaction"):
+                command.upgrade(config, "head")
+    finally:
+        engine.dispose()
+    assert current_revision(url) is None
+    assert _table_names(url) == []
+
+
+def test_a_connection_in_autocommit_is_refused(database_url: str) -> None:
+    """A connection in autocommit is refused on either database, before any revision runs.
+
+    Autocommit commits each statement as it runs, whatever the migrations ask
+    of the connection. On SQLite, SQLAlchemy's AUTOCOMMIT sets the sqlite3
+    connection's isolation_level to None, the value the transaction recipe
+    sets too, so what the refusal looks at is whether a transaction is
+    actually open.
+    """
+    engine = build_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            config = build_alembic_config(database_url)
+            config.attributes["connection"] = connection.execution_options(
+                isolation_level="AUTOCOMMIT"
+            )
+            with pytest.raises(CommandError, match="not inside a database transaction"):
+                command.upgrade(config, "head")
+    finally:
+        engine.dispose()
+    assert current_revision(database_url) is None
+    assert _table_names(database_url) == []
+
+
+def test_a_connection_inside_a_transaction_is_used(database_url: str) -> None:
+    """A handed connection whose transactions are real migrates, and the run commits."""
+    engine = _transactional_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            config = build_alembic_config(database_url)
+            config.attributes["connection"] = connection
+            command.upgrade(config, "head")
+    finally:
+        engine.dispose()
+    assert current_revision(database_url) == head_revision()
+
+
+def test_an_sqlite_connection_with_autocommit_false_is_used(tmp_path: Path) -> None:
+    """sqlite3's ``autocommit=False`` keeps a transaction open, so the connection is used.
+
+    Python 3.12 added that mode for PEP 249 transaction handling. It leaves
+    isolation_level at the driver's default, which is why the refusal does
+    not go by that attribute.
+    """
+    url = _sqlite_url(tmp_path, "autocommit-false.db")
+    engine = create_engine(url, connect_args={"autocommit": False})
+    try:
+        with engine.connect() as connection:
+            assert connection.connection.driver_connection.isolation_level == ""
+            config = build_alembic_config(url)
+            config.attributes["connection"] = connection
+            command.upgrade(config, "head")
+    finally:
+        engine.dispose()
+    assert current_revision(url) == head_revision()
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["sqlite:///offline.db", "postgresql+psycopg://cfm@localhost/cfm"],
+    ids=["sqlite", "postgresql"],
+)
+def test_an_offline_script_is_one_transaction(url: str) -> None:
+    """``upgrade --sql`` prints one BEGIN before the first revision and one COMMIT after the last.
+
+    PostgreSQL scripts always had them. SQLite scripts had none, so each
+    statement of an applied script committed on its own. Offline mode
+    renders SQL without connecting, so neither case needs a database. The
+    script starts after 0002, whose data migration reads the users table and
+    so cannot be rendered offline.
+    """
+    buffer = io.StringIO()
+    config = Config(output_buffer=buffer)
+    config.set_main_option("script_location", str(SCRIPTS_PATH))
+    config.attributes["database_url"] = url
+    command.upgrade(config, "0002:head", sql=True)
+    lines = [line for line in buffer.getvalue().splitlines() if line.strip()]
+    assert lines[0] == "BEGIN;"
+    assert lines[-1] == "COMMIT;"
+    assert lines.count("BEGIN;") == lines.count("COMMIT;") == 1
+
+
+def test_the_application_engine_keeps_the_drivers_transaction_handling(tmp_path: Path) -> None:
+    """Only the migration run takes transaction control from the sqlite3 driver.
+
+    The migrations build their engine with the function the application uses,
+    so whatever they attach must stay on their own engine: after an upgrade
+    in the same process, a new application engine still leaves transactions
+    to the driver and emits no BEGIN of its own.
+    """
+    url = _sqlite_url(tmp_path, "application.db")
+    upgrade_to_head(url)
+    engine = build_engine(url)
+    statements: list[str] = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _record(_connection: Connection, _cursor: Any, statement: str, *_rest: Any) -> None:
+        statements.append(statement)
+
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("SELECT 1"))
+            isolation_level = connection.connection.driver_connection.isolation_level
+    finally:
+        engine.dispose()
+    assert isolation_level == ""
+    assert statements == ["SELECT 1"]
