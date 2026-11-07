@@ -28,7 +28,7 @@ counts, skips, or reveals a row the caller may not read.
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from typing import Final
+from typing import Any, Final
 
 from sqlalchemy import ColumnElement, Select, or_, select, true
 from sqlalchemy.orm import Session, aliased
@@ -86,7 +86,7 @@ def _location_sites() -> CTE:
     )
 
 
-def _locations_of(sites: Sequence[str]) -> Select[tuple[str]]:
+def _locations_of(sites: Sequence[str]) -> Select[Any]:
     tree = _location_sites()
     return select(tree.c.location_id).where(tree.c.site_id.in_(sites))
 
@@ -95,11 +95,11 @@ def _assets_on(sites: Sequence[str]) -> ColumnElement[bool]:
     return Asset.site_id.in_(sites)
 
 
-def _assets_of(sites: Sequence[str]) -> Select[tuple[str]]:
+def _assets_of(sites: Sequence[str]) -> Select[Any]:
     return select(Asset.id).where(_assets_on(sites))
 
 
-def _orders_of(sites: Sequence[str]) -> Select[tuple[str]]:
+def _orders_of(sites: Sequence[str]) -> Select[Any]:
     return select(MaintenanceOrder.id).where(MaintenanceOrder.asset_id.in_(_assets_of(sites)))
 
 
