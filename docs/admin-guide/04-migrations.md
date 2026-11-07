@@ -42,6 +42,98 @@ $ alembic current
 
 For SQLite the file is created by this command if it does not exist.
 
+## A failed run changes nothing
+
+Every run of the chain is one transaction, on SQLite as on PostgreSQL. If
+anything in it fails, nothing it did is kept: the schema and the stamp are as
+they were before the command, and `alembic current` still prints the revision
+the run started from. There is no half-applied revision to repair first; fix
+the cause and run the command again. `downgrade` and `stamp` run the same way.
+
+PostgreSQL does this by itself. On SQLite it is the migration environment's
+doing. Left to its defaults, Alembic treats SQLite DDL as non-transactional and
+commits after each revision, and Python's `sqlite3` driver opens a transaction
+only before a statement that changes data, so a `CREATE TABLE` issued earlier
+would be permanent at once. The environment declares the run transactional, and
+every command that opens the database says so in its second line of output:
+
+```
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+```
+
+It also opens its SQLite connection with the driver's own transaction handling
+switched off, and starts each transaction with `BEGIN IMMEDIATE`. That
+connection belongs to the migrations alone; the application's connections keep
+the driver's default.
+
+Verified on SQLite, with a revision added after `0004` that adds a column,
+creates a table and then fails. Against a database at `0004`, one written by
+the 0.3.0 release among them, the failed upgrade left the file byte-for-byte as
+it was, still stamped `0004`. Against an empty database, it left no tables and
+no stamp. Up to 0.3.0, the first run kept the column and the table, and the
+second left the database stamped `0004`. The test suite asserts both cases,
+plus a failure inside a batch rebuild and one while the stamp is being written,
+on SQLite and, in CI, on PostgreSQL 16.
+
+### The write lock
+
+`BEGIN IMMEDIATE` takes the database's write lock before the run reads
+anything, and the run holds it until it commits. Two upgrades of one file
+started at the same moment therefore run one after the other. Executed three
+times: each time the first applied all four revisions and the second found
+nothing left to do. Up to 0.3.0, the second failed with
+`table audit_entries already exists` all three times.
+
+Every command that opens the database takes the lock, `current` and `check`
+included. If another connection holds it, the command waits five seconds, the
+`sqlite3` driver's default, and then stops, having changed nothing. Executed
+with a second process holding `BEGIN IMMEDIATE` on a database at `0003`, which
+was unchanged afterwards:
+
+```
+$ alembic upgrade head
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) database is locked
+```
+
+With the service stopped, as the [upgrade procedure](13-upgrades.md) has it,
+nothing else holds the lock. The lock does not make `CFM_DB_AUTO_UPGRADE` safe
+for several processes: a process queued behind a migration that takes longer
+than five seconds fails to start, and PostgreSQL runs take no such lock.
+
+### Handing the migrations a connection
+
+The environment also accepts an open SQLAlchemy connection in
+`config.attributes["connection"]`, for a caller that already holds one. It
+cannot reconfigure a connection it did not open, so it checks it before the
+first revision, and refuses one on which the run could not be one
+transaction: an SQLite connection left to the driver's own transaction
+handling, which is what `cfm.database.build_engine` gives, or a connection in
+`AUTOCOMMIT` on either database. Executed:
+
+```
+$ python -c "
+from alembic import command
+from cfm.database import build_engine
+from cfm.migrate import build_alembic_config
+url = 'sqlite:///./handed.db'
+with build_engine(url).connect() as connection:
+    config = build_alembic_config(url)
+    config.attributes['connection'] = connection
+    command.upgrade(config, 'head')
+"
+alembic.util.exc.CommandError: Refusing to migrate over a connection that is not inside a database transaction: each statement would be committed as it ran, and a run that failed part-way would leave the schema half-upgraded. Hand over a connection whose transactions are real (on SQLite, set isolation_level = None on the sqlite3 connection and emit BEGIN from the engine's 'begin' event, or connect with autocommit=False; on any database, do not use AUTOCOMMIT), or pass config.attributes['database_url'] instead and let the migrations open a connection of their own.
+```
+
+`handed.db` was left empty. An SQLite connection the run accepts comes from an
+engine that sets `isolation_level = None` on each `sqlite3` connection and
+emits `BEGIN` from its `begin` event, the recipe in SQLAlchemy's SQLite
+documentation, or from one created with `connect_args={"autocommit": False}`
+on Python 3.12 or later. The helpers in `cfm.migrate` pass a URL and never need
+any of this.
+
 ## The refuse-to-start policy
 
 With `CFM_DB_AUTO_UPGRADE` unset or `false` — the default — the application
@@ -135,8 +227,10 @@ $ alembic upgrade head
 sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) table site_grants already exists
 ```
 
-The database is now stamped `0001` while its schema is not `0001`, and the
-upgrade has failed part-way. **Verify before you stamp**, as the error message
+The database is now stamped `0001` while its schema is not `0001`. The upgrade
+stopped at the first statement of `0002`; being one transaction, it changed
+nothing (the file was byte-for-byte what the stamp had left), but it fails the
+same way every time it is run. **Verify before you stamp**, as the error message
 itself says: compare the tables against the schema the target revision builds,
 and stamp the revision that matches what is actually there — not always `0001`.
 Take a backup first; recovering from a wrong stamp means restoring.
