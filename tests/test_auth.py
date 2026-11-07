@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
@@ -374,10 +375,9 @@ async def test_forwarded_headers_share_one_bucket_without_trusted_proxy(app: Fas
         # one bucket, and that bucket is locked.
         response = await client.get("/api/v1/me", headers={**ACTOR, "X-Forwarded-For": "10.0.0.99"})
         assert response.status_code == 429
-        # The failures counted against the shared bucket, not against the
-        # peer: traffic from the same peer without a header keeps its own
-        # budget.
-        assert (await client.get("/api/v1/me", headers=ACTOR)).status_code == 200
+        # The same failures counted against the address the application was
+        # handed, too: dropping the header does not reach a second budget.
+        assert (await client.get("/api/v1/me", headers=ACTOR)).status_code == 429
 
 
 async def test_rotating_the_forwarded_header_does_not_evade_the_lockout(app: FastAPI) -> None:
@@ -446,3 +446,112 @@ async def test_trusted_proxy_attributes_failures_to_the_forwarded_client(
         assert other.status_code == 200
         direct = await client.get("/api/v1/me", headers=ACTOR)
         assert direct.status_code == 200
+
+
+async def test_failures_without_a_header_lock_header_attempts_too(app: FastAPI) -> None:
+    forwarded = {**ACTOR, "X-Forwarded-For": "10.0.0.7"}
+    async with client_from(app, "192.0.2.45") as client:
+        for _ in range(DEFAULT_MAX_FAILURES):
+            assert (await client.get("/api/v1/me", headers=BAD)).status_code == 401
+        # Adding the header does not open a second budget: the attempt still
+        # counts against the address the application is handed, and that
+        # address is locked.
+        assert (await client.get("/api/v1/me", headers=forwarded)).status_code == 429
+    # The shared bucket was never charged, so another peer sending the same
+    # header is let through.
+    async with client_from(app, "192.0.2.46") as other:
+        assert (await other.get("/api/v1/me", headers=forwarded)).status_code == 200
+
+
+async def test_alternating_the_header_locks_after_the_same_number_of_failures(
+    app: FastAPI,
+) -> None:
+    forwarded = {"X-Forwarded-For": "10.0.0.7"}
+    async with client_from(app, "192.0.2.47") as client:
+        for index in range(DEFAULT_MAX_FAILURES):
+            headers = {**BAD, **forwarded} if index % 2 else BAD
+            assert (await client.get("/api/v1/me", headers=headers)).status_code == 401
+        # Half of the failures carried the header and half did not; all of
+        # them counted against the peer, which is now locked either way.
+        assert (await client.get("/api/v1/me", headers=ACTOR)).status_code == 429
+        assert (await client.get("/api/v1/me", headers={**ACTOR, **forwarded})).status_code == 429
+
+
+async def test_retry_after_is_the_longest_applicable_lockout(app: FastAPI) -> None:
+    clock = FakeClock()
+    install_limiter(app, clock, max_failures=3, lockout_seconds=300)
+    forwarded = {"X-Forwarded-For": "10.0.0.7"}
+    async with (
+        client_from(app, "192.0.2.61") as first,
+        client_from(app, "192.0.2.62") as second,
+        client_from(app, "192.0.2.63") as third,
+    ):
+        # At 1000 the shared bucket and 192.0.2.61 lock together, until 1300.
+        for _ in range(3):
+            assert (await first.get("/api/v1/me", headers={**BAD, **forwarded})).status_code == 401
+        clock.advance(100)
+        # At 1100 192.0.2.62 locks on its own address, until 1400.
+        for _ in range(3):
+            assert (await second.get("/api/v1/me", headers=BAD)).status_code == 401
+        # With the header, 192.0.2.62 is held by both lockouts, 200 seconds
+        # left on one and 300 on the other, and is told the longer.
+        held = await second.get("/api/v1/me", headers={**ACTOR, **forwarded})
+        assert held.status_code == 429
+        assert held.headers["retry-after"] == "300"
+        # Without the header, 192.0.2.61 waits for its own lockout only.
+        alone = await first.get("/api/v1/me", headers=ACTOR)
+        assert alone.status_code == 429
+        assert alone.headers["retry-after"] == "200"
+        clock.advance(201)
+        # At 1301 the shared bucket is free, and 192.0.2.63 locks it again
+        # with its own address, until 1601: now the bucket is the longer.
+        for _ in range(3):
+            assert (await third.get("/api/v1/me", headers={**BAD, **forwarded})).status_code == 401
+        held = await second.get("/api/v1/me", headers={**ACTOR, **forwarded})
+        assert held.status_code == 429
+        assert held.headers["retry-after"] == "300"
+        alone = await second.get("/api/v1/me", headers=ACTOR)
+        assert alone.status_code == 429
+        assert alone.headers["retry-after"] == "99"
+        assert (await first.get("/api/v1/me", headers=ACTOR)).status_code == 200
+
+
+async def test_each_locked_key_is_logged(app: FastAPI, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.WARNING, logger="cfm.ratelimit")
+    async with client_from(app, "192.0.2.48") as client:
+        for _ in range(DEFAULT_MAX_FAILURES):
+            headers = {**BAD, "X-Forwarded-For": "10.0.0.7"}
+            assert (await client.get("/api/v1/me", headers=headers)).status_code == 401
+    records = [record for record in caplog.records if record.name == "cfm.ratelimit"]
+    lockouts = [record.getMessage() for record in records]
+    # The tenth failure locked both sources it counted against, and each
+    # lockout has its own line, so the shared bucket's is still there.
+    line = "Locked authentication source {} for 300 seconds after 10 failures within 60 seconds."
+    assert line.format("192.0.2.48") in lockouts
+    assert sorted(lockouts) == [line.format("192.0.2.48"), line.format("untrusted-forwarded")]
+    assert {record.levelno for record in records} == {logging.WARNING}
+
+
+async def test_an_address_uvicorn_substituted_is_charged_as_reported(app: FastAPI) -> None:
+    """What the application cannot see past, pinned so that it stays stated.
+
+    uvicorn trusts the loopback by default and replaces the address of a
+    request from it with an entry of the header the request carries. The
+    application is handed that address and nothing else, so failures sent
+    from the loopback with a header count against the shared bucket and
+    against an address of the sender's choosing, while the loopback's own
+    address keeps a budget for attempts without the header.
+    """
+    async with proxied_client(app, "192.0.2.77") as local:
+        for _ in range(DEFAULT_MAX_FAILURES):
+            assert (await local.get("/api/v1/me", headers=BAD)).status_code == 401
+        assert (await local.get("/api/v1/me", headers=ACTOR)).status_code == 429
+    # The address named in the header was charged as if the failures had come
+    # from it, so a client really connecting from there is locked out.
+    async with client_from(app, "192.0.2.77") as named:
+        assert (await named.get("/api/v1/me", headers=ACTOR)).status_code == 429
+    # The loopback itself was never charged: without the header it still has
+    # a budget of its own.
+    transport = ASGITransport(app=ProxyHeadersMiddleware(app), client=("127.0.0.1", 40000))
+    async with AsyncClient(transport=transport, base_url="http://testserver") as local:
+        assert (await local.get("/api/v1/me", headers=ACTOR)).status_code == 200
