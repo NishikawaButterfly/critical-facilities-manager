@@ -48,7 +48,7 @@ def upgrade() -> None:
 
     # Every user that predates site scoping keeps installation-wide authority.
     connection = op.get_bind()
-    user_ids = connection.execute(sa.text("SELECT id FROM users")).scalars().all()
+    user_ids: Sequence[str] = connection.execute(sa.text("SELECT id FROM users")).scalars().all()
     if user_ids:
         site_grants = sa.table(
             "site_grants",
