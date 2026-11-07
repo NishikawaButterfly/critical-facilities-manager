@@ -6,6 +6,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A failed upgrade leaves an SQLite database exactly at the revision it
+  started from; the whole upgrade runs as one transaction, as it already did
+  on PostgreSQL. Downgrades run the same way, and a script printed with
+  `--sql` is wrapped in one transaction on both databases. Compatibility: on
+  SQLite, every Alembic command that opens the database holds its write lock
+  while it runs, and a connection handed to the migrations in
+  `config.attributes["connection"]` is refused unless the run can be one
+  transaction on it. (#60)
+
 ## [0.3.0] - 2026-09-12
 
 ### Changed
