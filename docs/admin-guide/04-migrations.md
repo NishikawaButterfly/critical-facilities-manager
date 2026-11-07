@@ -8,17 +8,18 @@ database that is not at the newest one.
 
 ## The chain
 
-Four revisions, linear, no branches:
+Five revisions, linear, no branches:
 
 ```
 $ alembic history
-0003 -> 0004 (head), Database-level append-only enforcement for audit and evidence tables.
+0004 -> 0005 (head), Append-only enforcement against inserts that replace a stored row.
+0003 -> 0004, Database-level append-only enforcement for audit and evidence tables.
 0002 -> 0003, Verifiable file evidence.
 0001 -> 0002, Site-scoped write authority.
 <base> -> 0001, Schema baseline.
 ```
 
-`alembic heads` prints `0004 (head)`. Every command below reads
+`alembic heads` prints `0005 (head)`. Every command below reads
 `CFM_DATABASE_URL` (or `.env`, or the SQLite default) through the same settings
 object the application uses, so `alembic` always targets the database the
 application would serve. There is deliberately no `sqlalchemy.url` in
@@ -35,9 +36,10 @@ INFO  [alembic.runtime.migration] Running upgrade  -> 0001, Schema baseline.
 INFO  [alembic.runtime.migration] Running upgrade 0001 -> 0002, Site-scoped write authority.
 INFO  [alembic.runtime.migration] Running upgrade 0002 -> 0003, Verifiable file evidence.
 INFO  [alembic.runtime.migration] Running upgrade 0003 -> 0004, Database-level append-only enforcement for audit and evidence tables.
+INFO  [alembic.runtime.migration] Running upgrade 0004 -> 0005, Append-only enforcement against inserts that replace a stored row.
 
 $ alembic current
-0004 (head)
+0005 (head)
 ```
 
 For SQLite the file is created by this command if it does not exist.
@@ -58,7 +60,7 @@ ERROR:    Application startup failed. Exiting.
 **A database behind head** (this one was stamped `0003`):
 
 ```
-cfm.migrate.SchemaOutOfDateError: The database schema is at revision 0003 but the application expects 0004. Run 'alembic upgrade head' before starting the application, or set CFM_DB_AUTO_UPGRADE=true to let the application migrate at startup.
+cfm.migrate.SchemaOutOfDateError: The database schema is at revision 0003 but the application expects 0005. Run 'alembic upgrade head' before starting the application, or set CFM_DB_AUTO_UPGRADE=true to let the application migrate at startup.
 ```
 
 **A database with tables but no Alembic stamp:**
@@ -88,8 +90,8 @@ rows a schema it does not know about.
 
 `CFM_DB_AUTO_UPGRADE=true` makes the application run `upgrade head` itself
 during startup. Verified: pointed at a database stamped `0003`, the process
-started and answered `{"status":"ok","version":"0.2.0","database":"ok"}`, with
-the database at `0004` afterwards.
+started and answered `{"status":"ok","version":"0.3.0","database":"ok"}`, with
+the database at `0005` afterwards.
 
 Safe when **all** of these hold:
 
@@ -117,9 +119,10 @@ $ alembic upgrade head
 INFO  [alembic.runtime.migration] Running upgrade 0001 -> 0002, Site-scoped write authority.
 INFO  [alembic.runtime.migration] Running upgrade 0002 -> 0003, Verifiable file evidence.
 INFO  [alembic.runtime.migration] Running upgrade 0003 -> 0004, Database-level append-only enforcement for audit and evidence tables.
+INFO  [alembic.runtime.migration] Running upgrade 0004 -> 0005, Append-only enforcement against inserts that replace a stored row.
 
 $ alembic current
-0004 (head)
+0005 (head)
 $ alembic check
 No new upgrade operations detected.
 ```
@@ -162,8 +165,8 @@ FAILED: Target database is not up to date.
 ```
 
 What `check` does **not** prove is as important. Alembic's autogenerate cannot
-see triggers, so the append-only triggers installed by `0004` are invisible to
-it. A green `check` says nothing about whether they exist. The project's test
+see triggers, so the append-only triggers installed by `0004` and `0005` are
+invisible to it. A green `check` says nothing about whether they exist. The project's test
 suite asserts them separately; on a live database, look for yourself
 ([Restore and disaster recovery](12-restore-and-disaster-recovery.md) shows the
 query).
@@ -174,6 +177,7 @@ Every migration has a `downgrade`, and the whole chain reverses cleanly:
 
 ```
 $ alembic downgrade base
+INFO  [alembic.runtime.migration] Running downgrade 0005 -> 0004, …
 INFO  [alembic.runtime.migration] Running downgrade 0004 -> 0003, …
 INFO  [alembic.runtime.migration] Running downgrade 0003 -> 0002, …
 INFO  [alembic.runtime.migration] Running downgrade 0002 -> 0001, …

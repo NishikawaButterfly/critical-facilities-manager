@@ -213,6 +213,25 @@ sqlite> update commissioning_evidence set note='x';
 Error: commissioning_evidence is append-only: UPDATE is not allowed
 ```
 
+On SQLite they also refuse an insert that reuses the key of a stored row.
+SQLite resolves `INSERT OR REPLACE` by deleting the stored row and inserting
+the new one, and that deletion fires no delete trigger, so without this guard
+one statement could swap an entry's actor, action and payloads. Verified on a
+direct connection:
+
+```
+INSERT OR REPLACE INTO audit_entries (id, occurred_at, actor, entity_type, entity_id, action)
+     SELECT id, occurred_at, 'someone-else', entity_type, entity_id, action
+       FROM audit_entries WHERE id = 86
+  -> IntegrityError: audit_entries is append-only: an INSERT colliding with an existing row is not allowed
+```
+
+`REPLACE INTO`, `INSERT OR IGNORE` and a plain `INSERT` of the same id get the
+same answer, and the evidence tables are guarded on every key they have, an
+evidence object's content hash included. PostgreSQL has no `REPLACE`; there,
+`INSERT … ON CONFLICT DO UPDATE` and `MERGE` meet the update trigger, which
+refuses them.
+
 The third is the one that matters. An application bug, a careless migration, or
 somebody with a database client and good intentions all hit the same wall.
 Removing history requires deliberately dropping the trigger first — which leaves

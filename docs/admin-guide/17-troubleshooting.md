@@ -46,7 +46,7 @@ first one goes missing.
 ### "The database schema is at revision X but the application expects Y."
 
 ```
-cfm.migrate.SchemaOutOfDateError: The database schema is at revision 0003 but the application expects 0004. Run 'alembic upgrade head' before starting the application, or set CFM_DB_AUTO_UPGRADE=true to let the application migrate at startup.
+cfm.migrate.SchemaOutOfDateError: The database schema is at revision 0003 but the application expects 0005. Run 'alembic upgrade head' before starting the application, or set CFM_DB_AUTO_UPGRADE=true to let the application migrate at startup.
 ```
 
 **Cause.** New code, un-migrated database. The normal state between step 2 and
@@ -258,14 +258,29 @@ open in a transaction, a maintenance script, a backup tool that locks.
 with the service stopped ([Backups](11-backups.md)), and do not run a second
 writer against a SQLite deployment.
 
-### A direct UPDATE or DELETE is refused
+### A direct UPDATE, DELETE or INSERT is refused
 
 ```
 IntegrityError: audit_entries is append-only: UPDATE is not allowed
 IntegrityError: evidence_attachments is append-only: DELETE is not allowed
+IntegrityError: audit_entries is append-only: an INSERT colliding with an existing row is not allowed
 ```
 
-**Cause.** Working as designed — the triggers from migration `0004`.
+**Cause.** Working as designed — the triggers from migrations `0004` and
+`0005`. The third answers, on SQLite, any insert that names a key a stored row
+already holds: an id, an evidence object's hash, or an object already attached
+to the same record. That includes `INSERT OR REPLACE`, which would otherwise
+delete the stored row, and `INSERT OR IGNORE` and `ON CONFLICT DO NOTHING`,
+which used to skip the row without an error. A script that copies rows in with
+either now fails at the first row already stored, and the statement carrying it
+inserts nothing at all.
+
+If the application's own writes start failing with the third message, look for
+a row somebody stored by hand under rowid `-1`, which is the `id` in every
+protected table but `evidence_objects`. SQLite shows the trigger `-1` for every
+rowid it has yet to assign, so that row collides with every insert that leaves
+the rowid to the database, and every insert the application makes does. Removing
+the row is a deletion like any other.
 
 **Fix.** If you genuinely need to delete, there is one supported route and it is
 a migration; read [Retention and legal hold](16-retention-and-legal-hold.md)

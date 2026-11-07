@@ -48,7 +48,7 @@ is the whole reason `CFM_DB_AUTO_UPGRADE` defaults to off
 
 ```
 $ alembic current
-0004 (head)
+0005 (head)
 $ alembic check
 No new upgrade operations detected.
 ```
