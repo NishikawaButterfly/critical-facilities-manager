@@ -470,9 +470,14 @@ APPEND_ONLY_TABLES: Final[tuple[str, ...]] = (
 """Tables whose rows are only ever inserted, enforced at the database layer.
 
 Migration ``0004`` installs ``BEFORE UPDATE`` / ``BEFORE DELETE`` triggers
-(plus ``TRUNCATE`` on PostgreSQL) on each of these tables, so history
-cannot be rewritten by an application bug, a migration mistake, or a
-direct connection — whatever role it uses. Triggers are not part of this
+(plus ``TRUNCATE`` on PostgreSQL) on each of these tables, and migration
+``0005`` adds a ``BEFORE INSERT`` trigger on SQLite that refuses an insert
+colliding with a stored row on any of its keys, which ``INSERT OR
+REPLACE`` would otherwise resolve by deleting that row without firing its
+delete trigger. History therefore cannot be rewritten by an application
+bug, a migration mistake, or a direct connection — whatever role it uses.
+PostgreSQL needs no insert trigger: it has no ``REPLACE``, and its upsert
+and ``MERGE`` fire the update trigger. Triggers are not part of this
 metadata, which keeps the autogenerate drift check blind to them; the
 dedicated tests in ``tests/test_append_only.py`` assert their presence
 and firing instead. Removing rows from one of these tables requires a

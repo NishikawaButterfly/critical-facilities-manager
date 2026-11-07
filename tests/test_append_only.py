@@ -456,6 +456,39 @@ def test_evidence_objects_cannot_be_replaced_through_their_rowid(seeded_sqlite: 
     )
 
 
+def test_a_row_stored_under_rowid_minus_one_stays_protected(seeded_sqlite: Engine) -> None:
+    """A row whose rowid is -1 is guarded like any other, at a price this pins.
+
+    SQLite shows a ``BEFORE INSERT`` trigger -1 for a rowid it has yet to
+    assign. Exempting -1 from the guard would let REPLACE rewrite a row
+    stored under it, so the guard does not, and while such a row exists
+    every insert that leaves the id to SQLite collides with it. Only an
+    explicit insert can store that row; the application never names an
+    integer id.
+    """
+    stored = (
+        "INSERT INTO audit_entries (id, occurred_at, actor, entity_type, entity_id, action)"
+        " VALUES (-1, '2026-01-01 00:00:00', 'ada', 'asset', 'a-1', 'updated')"
+    )
+    with seeded_sqlite.begin() as connection:
+        connection.execute(text(stored))
+    message = _collision_message("audit_entries")
+    _assert_refused_and_intact(
+        seeded_sqlite,
+        "audit_entries",
+        "INSERT OR REPLACE INTO audit_entries (id, occurred_at, actor, entity_type, entity_id,"
+        " action) VALUES (-1, '2026-01-01 00:00:00', 'mallory', 'asset', 'a-1', 'deleted')",
+        message,
+    )
+    _assert_refused_and_intact(
+        seeded_sqlite,
+        "audit_entries",
+        "INSERT INTO audit_entries (occurred_at, actor, entity_type, entity_id, action)"
+        " VALUES ('2026-01-02 00:00:00', 'ben', 'asset', 'a-1', 'updated')",
+        message,
+    )
+
+
 @pytest.mark.parametrize("target", ATTACHMENT_TARGETS)
 def test_an_attachment_cannot_be_replaced_through_its_target(tmp_path: Path, target: str) -> None:
     """An object attaches to a record once, and a second attach cannot replace the first.
