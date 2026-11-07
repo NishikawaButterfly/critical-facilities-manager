@@ -15,7 +15,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `License :: OSI Approved :: MIT License` classifier, which setuptools
   refuses beside a license expression. `LICENSE` still ships in the sdist and
   the wheel. Building from source needs setuptools 77 or later, which pip and
-  `build` install by themselves unless build isolation is turned off.
+  `build` install by themselves unless build isolation is turned off; a build
+  without isolation also needs `packaging` 24.2 or later.
 
 ## [0.3.0] - 2026-09-12
 
