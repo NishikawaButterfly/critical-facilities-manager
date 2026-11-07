@@ -6,6 +6,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Append-only rows can no longer be replaced on SQLite: an insert that
+  collides with an existing row of an audit or evidence table is refused, on
+  the row's id and on every other key the table has, and tests show the
+  PostgreSQL triggers refusing `ON CONFLICT DO UPDATE` and `MERGE`.
+  Compatibility: on SQLite, `INSERT OR IGNORE` and `ON CONFLICT DO NOTHING`
+  into those tables fail when they meet a stored row instead of skipping it,
+  and every colliding insert fails with the table's append-only message
+  instead of the message of the key it collides on. (#61)
+
 ## [0.3.0] - 2026-09-12
 
 ### Changed
