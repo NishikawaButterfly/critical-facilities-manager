@@ -17,19 +17,28 @@ Four tables, protected by database triggers since migration `0004`:
 - `evidence_objects`
 
 The API exposes no update or delete path for any of them. Neither does a direct
-database connection. Verified on a live database, on an ordinary connection:
+database connection, and an insert cannot take a stored row's place either.
+Verified on a database at `0005`, on an ordinary connection:
 
 ```
 UPDATE audit_entries SET actor='someone-else'
   -> IntegrityError: audit_entries is append-only: UPDATE is not allowed
 DELETE FROM evidence_attachments
   -> IntegrityError: evidence_attachments is append-only: DELETE is not allowed
+INSERT OR REPLACE INTO audit_entries (id, occurred_at, actor, entity_type, entity_id, action)
+     SELECT id, occurred_at, 'someone-else', entity_type, entity_id, action
+       FROM audit_entries WHERE id = 86
+  -> IntegrityError: audit_entries is append-only: an INSERT colliding with an existing row is not allowed
 ```
 
-Eight triggers on SQLite (an `UPDATE` and a `DELETE` guard per table); on
-PostgreSQL, one statement-level trigger per table over a `plpgsql` function,
-which also covers `TRUNCATE`. They come back with the schema on a restore —
-verified ([Restore and disaster recovery](12-restore-and-disaster-recovery.md)).
+Twelve triggers on SQLite: an `UPDATE` and a `DELETE` guard per table from
+`0004`, and from `0005` a guard per table that refuses an `INSERT` colliding
+with a stored row, which `INSERT OR REPLACE` would otherwise resolve by deleting
+that row without firing the delete guard. On PostgreSQL, one statement-level
+trigger per table over a `plpgsql` function, which also covers `TRUNCATE` and
+refuses `INSERT … ON CONFLICT DO UPDATE` and `MERGE`; PostgreSQL has no
+`REPLACE`. They come back with the schema on a restore — verified
+([Restore and disaster recovery](12-restore-and-disaster-recovery.md)).
 
 Everything else — assets, orders, permits, procedures, users — is ordinary
 data. The append-only rule covers history and evidence, not the operational
@@ -72,14 +81,15 @@ Exactly one, and it is deliberately expensive: **a migration that drops the
 trigger, deletes, and recreates it.** The full cycle was executed on a copy of
 a real database.
 
-At head, with 8 triggers and 69 audit entries, the delete is refused. Then:
+At head, with 12 triggers and 86 audit entries, the delete is refused. Then:
 
 ```
 $ alembic downgrade 0003
+INFO  [alembic.runtime.migration] Running downgrade 0005 -> 0004, Append-only enforcement against inserts that replace a stored row.
 INFO  [alembic.runtime.migration] Running downgrade 0004 -> 0003, Database-level append-only enforcement for audit and evidence tables.
 ```
 
-Triggers: 0. Audit rows: still 69 — the downgrade removes the protection, not
+Triggers: 0. Audit rows: still 86 — the downgrade removes the protection, not
 the data. The delete now succeeds:
 
 ```
@@ -92,17 +102,18 @@ And the protection goes back on:
 ```
 $ alembic upgrade head
 INFO  [alembic.runtime.migration] Running upgrade 0003 -> 0004, Database-level append-only enforcement for audit and evidence tables.
+INFO  [alembic.runtime.migration] Running upgrade 0004 -> 0005, Append-only enforcement against inserts that replace a stored row.
 ```
 
-Triggers: 8 again. Audit rows: 65.
+Triggers: 12 again. Audit rows: 82.
 
-For a real deletion you would write your own migration rather than riding
-`0004`'s downgrade — one that drops the trigger, performs exactly the deletion
-you intend, recreates the trigger, and lands in the repository where it is
-reviewed and kept. Evidence *files* are a second, separate step: delete the
-object at `objects/<first 2>/<next 2>/<hash>` yourself, after the rows that
-reference it are gone, or you will have created the `500 evidence.corrupted`
-case on purpose.
+For a real deletion you would write your own migration rather than riding the
+downgrades of `0005` and `0004` — one that drops the trigger, performs exactly
+the deletion you intend, recreates the trigger, and lands in the repository
+where it is reviewed and kept. Evidence *files* are a second, separate step:
+delete the object at `objects/<first 2>/<next 2>/<hash>` yourself, after the
+rows that reference it are gone, or you will have created the
+`500 evidence.corrupted` case on purpose.
 
 **The friction is the feature.** A deletion has to arrive as a migration in the
 repository's history, which means it is visible, reviewable, and dated — not a
