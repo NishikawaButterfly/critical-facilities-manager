@@ -6,6 +6,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Sending a forwarded header on some attempts and not on others no longer
+  buys a second authentication budget, except where uvicorn itself rewrites
+  the address. With no trusted proxy declared, an attempt carrying an
+  `X-Forwarded-For` header counts against the shared `untrusted-forwarded`
+  bucket and against the address the application was given, a request is
+  refused while any of its sources is locked, `Retry-After` reports the
+  longest applicable lockout, and a lockout is never extended. A peer that
+  uvicorn trusts to rewrite its address, the loopback by default, is seen
+  only under the address its header names, so it still holds two budgets
+  and can charge that address; the reverse-proxy chapter describes this and
+  the configurations that avoid it. The extra cost is measured in the
+  rate-limiting chapter. Compatibility: a client that alternated between
+  sending and omitting the header now locks after the same number of
+  failures as one that does not, and a failure that locks two sources logs
+  two lockout lines. (#47)
+
 ## [0.3.0] - 2026-09-12
 
 ### Changed
