@@ -157,14 +157,16 @@ bucket costs a deployment that never declared its proxy are in
 [Running behind a reverse proxy](09-reverse-proxy.md), together with the one
 case that counting the address cannot cover: a peer that uvicorn trusts to
 rewrite its address is seen only under the address its header names, so it
-keeps a second budget and can spend somebody else's. It is required reading
-before tuning anything here — a limiter counting the wrong address is worse
-than none, because it looks like it is working.
+keeps a second budget, can spend somebody else's, and chooses what the second
+lockout line names. It is required reading before tuning anything here — a
+limiter counting the wrong address is worse than none, because it looks like
+it is working.
 
 ### What counting two sources costs
 
-`scripts/measure_auth_limiter.py` times the limiter's two operations with one
-source and with two, and then whole failed authentications through the
+`scripts/measure_auth_limiter.py` times three steps of the authentication path
+with one source and with two — working out the sources, the lockout check and
+the failure path — and then whole failed authentications through the
 application: a token that does not exist, sent in process to the ASGI
 application on a fresh SQLite database, with and without the header. Its
 docstring says how each figure is taken. A run with its defaults, on a laptop:
@@ -172,25 +174,28 @@ docstring says how each figure is taken. A run with its defaults, on a laptop:
 ```
 $ python scripts/measure_auth_limiter.py
 Python 3.13.3, SQLite 3.49.1
-Limiter, best of 2000 runs of 500 calls, microseconds per call:
-                    one source  two sources  difference
-  lockout check           0.59         0.68       +0.09
-  failure path            1.60         2.44       +0.84
+Steps on the authentication path, best of 2000 runs of 500 calls, microseconds per call:
+                            one source  two sources  difference
+  working out the sources         1.68         1.92       +0.23
+  lockout check                   0.59         0.69       +0.09
+  failure path                    1.58         2.43       +0.85
 Failed authentication through the ASGI application, median of 2000 requests each, microseconds:
-  without the header (one source)     3141.6
-  with the header (two sources)       3150.2
+  without the header (one source)     3288.9
+  with the header (two sources)       3282.9
 ```
 
-The lockout check runs before every authentication and the failure path after
-every failed one. A failed attempt counted against two sources therefore costs
-the limiter about 0.9 µs more than one counted against one, and a successful
-attempt carrying the header about 0.1 µs more. Two more runs gave the same
-limiter figures to within 0.04 µs.
+The sources are worked out and checked before every authentication, and the
+failure path runs after every failed one. A successful attempt carrying the
+header therefore costs about 0.3 µs more than one without it, 0.2 µs of that in
+working out its two sources, and a failed one about 1.2 µs more. Two more runs
+gave the same figures to within 0.04 µs.
 
 The failed authentication itself — the token hashed and looked up, the refusal
-written — took a median of 2.4 to 3.2 ms over the three runs, and the two kinds
-of request differed by between −3 and +9 µs, from one run to the next. The
-bookkeeping does not show at that scale: it is under 0.04% of the attempt.
+written — took a median of 3.2 to 3.3 ms over the three runs. The median with
+the header came out 6 µs below the one without it in one run, and 25 and 37 µs
+above it in the other two: differences of that size, in both directions, come
+from one run to the next, not from the bookkeeping, which is about 1.2 µs and
+under 0.04% of the attempt.
 
 ## What this does not defend against
 
@@ -223,9 +228,10 @@ the failure count, and the window. Alert on:
   `X-Forwarded-For` header while `CFM_TRUSTED_PROXY` is `false`. The throttle
   is doing its job, but every client sending that header is sharing one bucket
   and can lock the others out. The failure that locks it can lock the address
-  it came from as well, and then logs a second line, naming that address.
-  Declare the proxy, or stop the header from reaching the application
-  ([Running behind a reverse proxy](09-reverse-proxy.md)).
+  the application was handed as well, and then logs a second line naming that
+  address, which for a peer that uvicorn trusts to rewrite its address is
+  whatever its header said. Declare the proxy, or stop the header from reaching
+  the application ([Running behind a reverse proxy](09-reverse-proxy.md)).
 - **No lockouts ever, on an internet-facing installation** — plausible, but
   worth confirming the limiter is not disabled.
 

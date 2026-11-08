@@ -61,10 +61,11 @@ That second rule looks odd until you know what runs underneath the application.
 ### uvicorn rewrites the client address before the application sees it
 
 uvicorn enables `--proxy-headers` **by default**, and `--forwarded-allow-ips`
-defaults to `$FORWARDED_ALLOW_IPS` or, failing that, `127.0.0.1`. When the
+defaults to `$FORWARDED_ALLOW_IPS` or, failing that, `127.0.0.1,::1`. When the
 socket peer is in that list, uvicorn replaces the client address with an entry
 from `X-Forwarded-For` — the rightmost one that is not itself a trusted address
-— before any application code runs. Verified against uvicorn 0.54.0: three
+— before any application code runs, and without checking that the entry is an
+address. Verified against uvicorn 0.54.0, with the limit at 3 failures: three
 failures from the loopback carrying `203.0.113.77, 127.0.0.1` locked
 `203.0.113.77`, the trusted rightmost entry being skipped, and
 `untrusted-forwarded` with it.
@@ -117,11 +118,16 @@ declared its proxy:
 
 - **All clients behind an undeclared proxy share one lockout.** Their requests
   all carry the header the proxy appended, so ten failures from one user lock
-  out everyone else's tokens for `CFM_AUTH_LOCKOUT_SECONDS`. Setting
-  `CFM_TRUSTED_PROXY=true` — which that deployment should have set anyway —
-  gives every client its own bucket again.
+  out everyone else's tokens for `CFM_AUTH_LOCKOUT_SECONDS`. Where uvicorn does
+  not replace the proxy's address — under `--no-proxy-headers` or
+  `--forwarded-allow-ips ""`, or for a proxy on another host that
+  `--forwarded-allow-ips` does not name — the same failures lock the proxy's
+  own address as well, so authenticated requests from the proxy's host that
+  carry no header, a script run there for instance, are refused with them.
+  Setting `CFM_TRUSTED_PROXY=true` — which that deployment should have set
+  anyway — gives every client its own bucket again.
 
-Row one costs two more things, both confined to a peer that uvicorn trusts to
+Row one costs three more things, all confined to a peer that uvicorn trusts to
 rewrite its address — anything connecting from the loopback, with uvicorn's
 defaults, or from whatever `--forwarded-allow-ips` names — while
 `CFM_TRUSTED_PROXY` is `false`. The application is handed the address uvicorn
@@ -136,10 +142,26 @@ named:
   is charged as if the failures had come from there, so ten of them lock out a
   client that really connects from that address for `CFM_AUTH_LOCKOUT_SECONDS`,
   and lock the shared bucket at the same time.
+- **That peer chooses what the second lockout line says.** The line names the
+  address the application was handed, which for such a peer is whatever its
+  header said. With the limits used above, three failures from the loopback
+  carrying `X-Forwarded-For: 198.51.100.1 for 120 seconds after 3 failures
+  within 60 seconds. Locked authentication source 10.0.0.1` logged, besides the
+  line for `untrusted-forwarded`, a single line that reads as two lockouts, of
+  `198.51.100.1` and of `10.0.0.1`, neither of which was locked.
 
-Each of the three is a better trade than a lockout that anyone can step around
-by editing a header, and the configurations below avoid all of them: two declare
-the proxy, and the third stops uvicorn from substituting anything.
+Each of these is a better trade than a lockout that anyone can step around by
+editing a header, and the configurations below avoid them for every client that
+reaches the application through the proxy. The first two declare the proxy, so
+the application believes the rightmost `X-Forwarded-For` entry of whatever
+connects to it, and something that connects without going through the proxy is
+believed as the proxy is: it names its own source, gets a fresh budget for
+every value it sends, and can lock out any address it names
+([If you trust a proxy you do not have](#if-you-trust-a-proxy-you-do-not-have)).
+In the first, anything already on the host can connect that way; in the second,
+anything on the application's host and anything the firewall lets through. The
+third, for an installation with no proxy, stops uvicorn from substituting
+anything and believes no header, so it leaves nothing to name.
 
 ### What to actually run
 
@@ -150,7 +172,7 @@ $ python -m uvicorn cfm.main:app --host 127.0.0.1 --port 8000
 CFM_TRUSTED_PROXY=true
 ```
 
-uvicorn's default trust of `127.0.0.1` is sound *because* the bind is
+uvicorn's default trust of the loopback is sound *because* the bind is
 loopback-only: the only thing that can connect is something already on the
 host. `CFM_TRUSTED_PROXY=true` is what makes the application agree, and it is
 not optional: leave it at `false` and every client behind that proxy counts
