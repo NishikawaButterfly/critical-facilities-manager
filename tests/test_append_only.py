@@ -13,7 +13,11 @@ On SQLite those two triggers leave an insert free to rewrite a row.
 deleting the stored row and inserting the new one, and that deletion fires
 no delete trigger. Migration ``0005`` adds a ``BEFORE INSERT`` trigger per
 table that refuses any insert colliding with a stored row on any of the
-table's keys. PostgreSQL has no ``REPLACE``: its upsert and ``MERGE`` take
+table's keys, and an ``AFTER INSERT`` trigger that refuses a row under a
+negative rowid. SQLite leaves ``NEW.rowid`` undefined in a ``BEFORE
+INSERT`` trigger for a rowid it has yet to assign and shows -1 there, so a
+row stored under -1 would collide with every insert that leaves the rowid
+to SQLite. PostgreSQL has no ``REPLACE``: its upsert and ``MERGE`` take
 the update path, which the statement-level trigger from ``0004`` refuses,
 and the tests below show that it does.
 
@@ -37,21 +41,23 @@ database instead, so they run in every job.
 
 from __future__ import annotations
 
+import contextlib
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 from alembic import command
+from alembic.util import CommandError
 from sqlalchemy import Engine, inspect, select, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import DatabaseError
 from sqlalchemy.orm import Session
 
 from cfm.database import build_engine
-from cfm.migrate import build_alembic_config, upgrade_to_head
+from cfm.migrate import build_alembic_config, current_revision, upgrade_to_head
 from cfm.models import (
     APPEND_ONLY_TABLES,
     Asset,
@@ -121,6 +127,83 @@ failed, on the key's own constraint, whose message does not say that the
 table is append-only. The upsert that does nothing skipped the row in
 silence, as ``INSERT OR IGNORE`` did.
 """
+
+NEGATIVE_ROWID_INSERTS = (
+    pytest.param("INSERT", -1, id="INSERT under -1"),
+    pytest.param("INSERT", -2, id="INSERT under -2"),
+    pytest.param("INSERT OR REPLACE", -1, id="INSERT OR REPLACE under -1"),
+    pytest.param("INSERT OR IGNORE", -1, id="INSERT OR IGNORE under -1"),
+)
+"""Inserts by hand that name a negative rowid, and the rowid each names.
+
+A row under -1 is the one that would collide with every insert that leaves
+the rowid to SQLite. A row under -2 in a table with no higher rowid gets
+there one insert later, because SQLite numbers a new row one above the
+highest rowid stored.
+"""
+
+ROWS_BY_HAND: dict[str, str] = {
+    "audit_entries": (
+        "(id, occurred_at, actor, entity_type, entity_id, action, scope) VALUES (:rowid,"
+        " '2026-01-02 00:00:00', 'mallory', 'asset', 'asset-by-hand', 'updated', 'installation')"
+    ),
+    "commissioning_evidence": (
+        "(id, test_id, note, actor, recorded_at) VALUES (:rowid, 'test-by-hand',"
+        " 'Reading by hand.', 'mallory', '2026-01-02 00:00:00')"
+    ),
+    "evidence_attachments": (
+        "(id, evidence_object_id, order_id, attached_by, attached_at) VALUES (:rowid,"
+        " 'object-by-hand', 'order-by-hand', 'mallory', '2026-01-02 00:00:00')"
+    ),
+    "evidence_objects": (
+        "(rowid, id, sha256, size_bytes, filename, content_type, uploaded_by, created_at)"
+        f" VALUES (:rowid, 'object-by-hand', '{'f' * 64}', 4, 'by-hand.pdf', 'application/pdf',"
+        " 'mallory', '2026-01-02 00:00:00')"
+    ),
+}
+"""What follows ``INSERT INTO <table>`` for a row under the rowid ``:rowid``.
+
+The rowid is the integer id in every protected table but
+``evidence_objects``, whose id is text and whose rowid an insert names
+apart from it. No other key of these rows is one that a fixture stores, or
+that ``APPLICATION_ROWS`` builds, so each row collides with nothing.
+"""
+
+APPLICATION_ROWS: dict[str, Callable[[int], Any]] = {
+    "audit_entries": lambda n: AuditEntry(
+        actor="ben",
+        entity_type="asset",
+        entity_id=f"asset-{n}",
+        action="updated",
+        scope="installation",
+    ),
+    "commissioning_evidence": lambda n: CommissioningEvidence(
+        test_id="test-1", note=f"Reading {n} nominal.", actor="ben"
+    ),
+    "evidence_attachments": lambda n: EvidenceAttachment(
+        evidence_object_id=f"object-{n}", order_id="order-1", attached_by="ben"
+    ),
+    "evidence_objects": lambda n: EvidenceObject(
+        sha256=str(n) * 64,
+        size_bytes=4,
+        filename=f"report-{n}.pdf",
+        content_type="application/pdf",
+        uploaded_by="ben",
+    ),
+}
+"""The ``n``-th row of each protected table, built as the application builds it.
+
+The models leave the integer id and the rowid to SQLite, generate the text
+id of an evidence object, and name no rowid; every other key differs with
+``n``.
+"""
+
+SQLITE_0004_TRIGGERS: frozenset[str] = frozenset(
+    f"trg_{table}_no_{operation}"
+    for table in PROTECTED_TABLES
+    for operation in ("update", "delete")
+)
+"""The triggers migration 0004 leaves on SQLite: one per table and operation."""
 
 
 def _sqlite_url(tmp_path: Path, name: str = "append-only.db") -> str:
@@ -283,20 +366,33 @@ def _expected_trigger_names(engine: Engine) -> set[str]:
     three operations, and nothing for inserts: it has no REPLACE, and its
     upsert and MERGE fire that trigger. SQLite needs one row-level trigger
     per operation because it has no statement-level triggers and no
-    TRUNCATE, plus one that refuses an insert colliding with a stored row.
+    TRUNCATE, plus one that refuses an insert colliding with a stored row
+    and one that refuses a row under a negative rowid.
     """
     if engine.dialect.name == "postgresql":
         return {f"trg_{table}_append_only" for table in PROTECTED_TABLES}
     return {
         f"trg_{table}_no_{operation}"
         for table in PROTECTED_TABLES
-        for operation in ("update", "delete", "replace")
+        for operation in ("update", "delete", "replace", "negative_rowid")
     }
 
 
 def _collision_message(table: str) -> str:
     """What the guard from migration 0005 answers, on every table alike."""
     return f"{table} is append-only: an INSERT colliding with an existing row is not allowed"
+
+
+def _negative_rowid_message(table: str) -> str:
+    """What migration 0005 answers an insert that stores a row under a negative rowid."""
+    return f"{table} is append-only: an INSERT under a negative rowid is not allowed"
+
+
+def _upgraded_to_0004(tmp_path: Path) -> str:
+    """The URL of a new SQLite database migrated to ``0004``, before the insert guards."""
+    url = _sqlite_url(tmp_path, "at-0004.db")
+    command.upgrade(build_alembic_config(url), "0004")
+    return url
 
 
 def _forged_insert(engine: Engine, table: str, verb: str, clause: str = "") -> str:
@@ -456,37 +552,59 @@ def test_evidence_objects_cannot_be_replaced_through_their_rowid(seeded_sqlite: 
     )
 
 
-def test_a_row_stored_under_rowid_minus_one_stays_protected(seeded_sqlite: Engine) -> None:
-    """A row whose rowid is -1 is guarded like any other, at a price this pins.
+@pytest.mark.parametrize(("verb", "rowid"), NEGATIVE_ROWID_INSERTS)
+@pytest.mark.parametrize("table", PROTECTED_TABLES)
+def test_an_insert_under_a_negative_rowid_is_refused(
+    seeded_sqlite: Engine, table: str, verb: str, rowid: int
+) -> None:
+    """No row is stored under a negative rowid, whatever the conflict clause.
 
-    SQLite shows a ``BEFORE INSERT`` trigger -1 for a rowid it has yet to
-    assign. Exempting -1 from the guard would let REPLACE rewrite a row
-    stored under it, so the guard does not, and while such a row exists
-    every insert that leaves the id to SQLite collides with it. Only an
-    explicit insert can store that row; the application never names an
-    integer id.
+    SQLite leaves ``NEW.rowid`` undefined in a ``BEFORE INSERT`` trigger
+    for a rowid it has yet to assign and shows -1 there, so a row stored
+    under -1 would collide with every insert that leaves the rowid to
+    SQLite. Each row here collides with nothing stored; it is refused for
+    its rowid alone, and the table keeps none of it.
     """
-    stored = (
-        "INSERT INTO audit_entries (id, occurred_at, actor, entity_type, entity_id, action)"
-        " VALUES (-1, '2026-01-01 00:00:00', 'ada', 'asset', 'a-1', 'updated')"
-    )
-    with seeded_sqlite.begin() as connection:
-        connection.execute(text(stored))
-    message = _collision_message("audit_entries")
     _assert_refused_and_intact(
         seeded_sqlite,
-        "audit_entries",
-        "INSERT OR REPLACE INTO audit_entries (id, occurred_at, actor, entity_type, entity_id,"
-        " action) VALUES (-1, '2026-01-01 00:00:00', 'mallory', 'asset', 'a-1', 'deleted')",
-        message,
+        table,
+        # The table and the row come from this file's own constants.
+        f"{verb} INTO {table} {ROWS_BY_HAND[table]}",
+        _negative_rowid_message(table),
+        {"rowid": rowid},
     )
-    _assert_refused_and_intact(
-        seeded_sqlite,
-        "audit_entries",
-        "INSERT INTO audit_entries (occurred_at, actor, entity_type, entity_id, action)"
-        " VALUES ('2026-01-02 00:00:00', 'ben', 'asset', 'a-1', 'updated')",
-        message,
-    )
+
+
+@pytest.mark.parametrize("rowid", (-1, -2))
+@pytest.mark.parametrize("table", PROTECTED_TABLES)
+def test_an_insert_by_hand_cannot_block_the_inserts_the_application_makes(
+    tmp_path: Path, table: str, rowid: int
+) -> None:
+    """Inserts that leave the rowid to SQLite pass after any insert by hand.
+
+    The application names no integer id and no rowid. A row stored by hand
+    under -1 would collide with every one of its inserts. A row under -2,
+    in a table with no higher rowid, would make SQLite number the next row
+    -1, and every insert after that one would collide with it. The row by
+    hand is refused, so two rows added through the models are stored under
+    1 and 2.
+    """
+    engine = _migrated_engine(_sqlite_url(tmp_path))
+    try:
+        # The refusal itself is pinned above; this test is about what follows it.
+        with contextlib.suppress(DatabaseError), engine.begin() as connection:
+            connection.execute(text(f"INSERT INTO {table} {ROWS_BY_HAND[table]}"), {"rowid": rowid})
+        for n in (1, 2):
+            with Session(engine) as session:
+                session.add(APPLICATION_ROWS[table](n))
+                session.commit()
+        with engine.connect() as connection:
+            rowids = connection.execute(
+                text(f"SELECT rowid FROM {table} ORDER BY rowid")  # noqa: S608
+            ).scalars()
+            assert list(rowids) == [1, 2]
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.parametrize("target", ATTACHMENT_TARGETS)
@@ -663,6 +781,57 @@ def test_triggers_exist_after_upgrade_head(database_url: str) -> None:
         engine.dispose()
 
 
+@pytest.mark.parametrize("table", PROTECTED_TABLES)
+def test_the_upgrade_to_0005_refuses_a_row_stored_under_a_negative_rowid(
+    tmp_path: Path, table: str
+) -> None:
+    """A row stored under a negative rowid before ``0005`` stops the upgrade.
+
+    Left beside the guards, such a row can make them refuse the inserts
+    that leave the rowid to SQLite. The upgrade names the table and the
+    rowid and changes nothing: the database stays at ``0004``, with the
+    triggers from ``0004`` and the row as it was.
+    """
+    url = _upgraded_to_0004(tmp_path)
+    engine = build_engine(url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(f"INSERT INTO {table} {ROWS_BY_HAND[table]}"), {"rowid": -1})
+        stored = _rows(engine, table)
+        with pytest.raises(CommandError, match=re.escape(f"rowid: {table} (-1).")):
+            command.upgrade(build_alembic_config(url), "head")
+        assert current_revision(url) == "0004"
+        assert _trigger_names(engine) == SQLITE_0004_TRIGGERS
+        assert _rows(engine, table) == stored
+    finally:
+        engine.dispose()
+
+
+def test_the_refusal_names_each_table_and_its_negative_rowids(tmp_path: Path) -> None:
+    """The refusal lists the tables concerned, ten rowids each at most, nearest zero first."""
+    url = _upgraded_to_0004(tmp_path)
+    engine = build_engine(url)
+    try:
+        with engine.begin() as connection:
+            for rowid in range(-1, -13, -1):
+                connection.execute(
+                    text(f"INSERT INTO audit_entries {ROWS_BY_HAND['audit_entries']}"),
+                    {"rowid": rowid},
+                )
+            connection.execute(
+                text(f"INSERT INTO evidence_objects {ROWS_BY_HAND['evidence_objects']}"),
+                {"rowid": -3},
+            )
+        with pytest.raises(CommandError) as refusal:
+            command.upgrade(build_alembic_config(url), "head")
+        assert (
+            "rowid: audit_entries (-1, -2, -3, -4, -5, -6, -7, -8, -9, -10 and 2 more);"
+            " evidence_objects (-3)."
+        ) in str(refusal.value)
+    finally:
+        engine.dispose()
+
+
 def test_downgrading_below_0005_keeps_the_update_and_delete_triggers(tmp_path: Path) -> None:
     """Below ``0005`` the insert guards are gone and ``0004``'s triggers remain."""
     url = _sqlite_url(tmp_path, "downgrade-0005.db")
@@ -670,11 +839,7 @@ def test_downgrading_below_0005_keeps_the_update_and_delete_triggers(tmp_path: P
     command.downgrade(build_alembic_config(url), "0004")
     engine = build_engine(url)
     try:
-        assert _trigger_names(engine) == {
-            f"trg_{table}_no_{operation}"
-            for table in PROTECTED_TABLES
-            for operation in ("update", "delete")
-        }
+        assert _trigger_names(engine) == SQLITE_0004_TRIGGERS
     finally:
         engine.dispose()
 
