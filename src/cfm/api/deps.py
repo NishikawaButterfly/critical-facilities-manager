@@ -3,7 +3,8 @@
 Authentication is a bearer API token (``Authorization: Bearer <token>``)
 resolved to an active user; the authenticated username is the actor recorded
 in every audit entry. Failed authentications are throttled per network
-source (see :mod:`cfm.ratelimit`): a locked source receives 429 before any
+source (see :mod:`cfm.ratelimit`), and an attempt counts against every source
+it could belong to: one with any of them locked receives 429 before any
 token is hashed or looked up, and only failed bearer lookups count toward
 the limit — successful authentications and requests without credentials
 never do. Role authorization happens at include time: routers sit under a
@@ -33,7 +34,7 @@ from ..domain import UserRole
 from ..errors import AuthenticationError, PermissionDeniedError, RateLimitedError
 from ..evidence import EvidenceStore
 from ..models import User
-from ..ratelimit import AuthRateLimiter, client_source
+from ..ratelimit import AuthRateLimiter, client_sources
 from ..services.tokens import resolve_token
 
 READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -61,11 +62,12 @@ def get_current_user(
 ) -> User:
     settings: Settings = request.app.state.settings
     limiter: AuthRateLimiter = request.app.state.auth_limiter
-    source = client_source(request, trusted_proxy=settings.trusted_proxy)
-    retry_after = limiter.retry_after(source)
+    sources = client_sources(request, trusted_proxy=settings.trusted_proxy)
+    retry_after = limiter.retry_after_any(sources)
     if retry_after is not None:
-        # Cheap rejection first: a locked source is turned away before any
-        # hashing or token lookup, with or without credentials attached.
+        # Cheap rejection first: an attempt with any of its sources locked
+        # is turned away before any hashing or token lookup, with or without
+        # credentials attached, and told the longest of their waits.
         raise RateLimitedError(RATE_LIMITED_DETAIL, retry_after_seconds=retry_after)
     if credentials is None:
         raise AuthenticationError(
@@ -75,7 +77,7 @@ def get_current_user(
     try:
         return resolve_token(session, credentials.credentials)
     except AuthenticationError:
-        limiter.record_failure(source)
+        limiter.record_failures(sources)
         raise
 
 
