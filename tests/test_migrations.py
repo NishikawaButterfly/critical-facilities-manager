@@ -40,7 +40,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.util import CommandError
 from sqlalchemy import Connection, Engine, create_engine, event, inspect, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from cfm.config import Settings
 from cfm.database import Base, build_engine
@@ -264,7 +264,7 @@ def test_ensure_fresh_schema_refuses_a_pre_migration_database(tmp_path: Path) ->
 
 INJECTED_REVISION = "injected"
 
-_INJECTED_SCRIPT = '''"""Injected by tests/test_migrations.py: it fails after issuing DDL.
+_INJECTED_SCRIPT = '''"""Injected after head by tests/test_migrations.py.
 
 Revision ID: {revision}
 Revises: {down_revision}
@@ -294,6 +294,26 @@ _CREATE_A_TABLE = (
     'op.create_table("injected_table", sa.Column("id", sa.Integer(), primary_key=True))'
 )
 _RAISE = 'raise RuntimeError("injected failure after DDL")'
+_INSERT_A_ROW = 'op.execute("INSERT INTO injected_table (id) VALUES (1)")'
+_CREATE_A_SECOND_TABLE = (
+    'op.create_table("injected_after", sa.Column("id", sa.Integer(), primary_key=True))'
+)
+_CATCH_AND_CARRY_ON = ("except sa.exc.DBAPIError:", "    pass")
+# On SQLite each of these ends the whole transaction, not only the statement
+# that failed. On PostgreSQL each is a syntax error, which aborts the
+# transaction there.
+_INSERT_OR_ROLLBACK = (
+    "try:",
+    '    op.execute("INSERT OR ROLLBACK INTO injected_table (id) VALUES (1)")',
+    *_CATCH_AND_CARRY_ON,
+)
+_RAISE_ROLLBACK_IN_A_TRIGGER = (
+    "try:",
+    '    op.execute("CREATE TRIGGER injected_guard BEFORE INSERT ON injected_table'
+    " BEGIN SELECT RAISE(ROLLBACK, 'injected'); END\")",
+    '    op.execute("INSERT INTO injected_table (id) VALUES (2)")',
+    *_CATCH_AND_CARRY_ON,
+)
 
 
 def _scripts_with_a_revision_after_head(tmp_path: Path, statements: tuple[str, ...]) -> Path:
@@ -485,8 +505,112 @@ def test_a_failing_run_rolls_back_every_revision_it_applied(
     assert _table_names(database_url) == []
 
 
+@pytest.mark.parametrize(
+    "statements",
+    [
+        pytest.param(
+            (_CREATE_A_TABLE, _INSERT_A_ROW, *_INSERT_OR_ROLLBACK, _CREATE_A_SECOND_TABLE),
+            id="insert-or-rollback",
+        ),
+        pytest.param(
+            (_CREATE_A_TABLE, *_RAISE_ROLLBACK_IN_A_TRIGGER, _CREATE_A_SECOND_TABLE),
+            id="raise-rollback-in-a-trigger",
+        ),
+        pytest.param(
+            (_CREATE_A_TABLE, _INSERT_A_ROW, *_INSERT_OR_ROLLBACK),
+            id="insert-or-rollback-before-the-stamp",
+        ),
+    ],
+)
+def test_a_run_stops_at_the_first_statement_after_its_transaction_ended(
+    database_url: str, tmp_path: Path, statements: tuple[str, ...]
+) -> None:
+    """A revision that carries on after its transaction ended leaves nothing behind.
+
+    After some errors SQLite rolls back the whole transaction rather than
+    the statement: a conflict resolved with ROLLBACK, or RAISE(ROLLBACK) in
+    a trigger. A revision that caught such an error and went on used to run
+    every later statement outside any transaction, each committed on its
+    own, the new stamp included, so the run could even report success with
+    the work before the error gone. PostgreSQL refuses every statement after
+    an error until the transaction ends, and on SQLite the migration
+    environment refuses the next statement itself. Either way the run fails
+    at the first statement after the error, whether that is the revision's
+    own or the stamp, and the database is exactly as the run found it.
+    """
+    start = head_revision()
+    assert start is not None
+    config = _injected_config(
+        _scripts_with_a_revision_after_head(tmp_path, statements), database_url
+    )
+    command.upgrade(config, start)
+    _seed_a_site(database_url)
+    before = _database_state(database_url)
+
+    error, message = (
+        (CommandError, "transaction ended before the run did")
+        if database_url.startswith("sqlite")
+        else (DBAPIError, "current transaction is aborted")
+    )
+    with pytest.raises(error, match=message):
+        command.upgrade(config, "head")
+
+    assert _database_state(database_url) == before
+
+
+def test_a_revision_that_rolls_back_to_a_savepoint_carries_on(
+    database_url: str, tmp_path: Path
+) -> None:
+    """An error caught inside a savepoint leaves the run's transaction open.
+
+    Only the savepoint is rolled back, so the statements after it run in the
+    same transaction and the run commits, on both databases: what stops a
+    run is a transaction that has ended, not an error a revision handled.
+    """
+    statements = (
+        _CREATE_A_TABLE,
+        _INSERT_A_ROW,
+        "try:",
+        "    with op.get_bind().begin_nested():",
+        f"        {_INSERT_A_ROW}",
+        "except sa.exc.IntegrityError:",
+        "    pass",
+        _CREATE_A_SECOND_TABLE,
+    )
+    config = _injected_config(
+        _scripts_with_a_revision_after_head(tmp_path, statements), database_url
+    )
+    command.upgrade(config, "head")
+
+    state = _database_state(database_url)
+    assert state.stamp == INJECTED_REVISION
+    assert state.rows["injected_table"] == 1
+    assert "injected_after" in state.schema
+
+
+def test_an_autocommit_block_still_commits_part_of_a_run(tmp_path: Path) -> None:
+    """Alembic's autocommit_block() ends the run's transaction on purpose, and still works.
+
+    It commits what the run did before the block and begins a new
+    transaction after it, so the refusal of statements issued once a
+    transaction has ended must let through the BEGIN that opens the next one.
+    """
+    url = _sqlite_url(tmp_path, "autocommit-block.db")
+    statements = (
+        _CREATE_A_TABLE,
+        "with op.get_context().autocommit_block():",
+        '    op.execute("CREATE TABLE injected_inside (id INTEGER PRIMARY KEY)")',
+        _CREATE_A_SECOND_TABLE,
+    )
+    config = _injected_config(_scripts_with_a_revision_after_head(tmp_path, statements), url)
+    command.upgrade(config, "head")
+
+    assert current_revision(url) == INJECTED_REVISION
+    assert {"injected_table", "injected_inside", "injected_after"} <= set(_table_names(url))
+
+
 def test_an_sqlite_connection_without_explicit_transactions_is_refused(tmp_path: Path) -> None:
-    """A connection left to the sqlite3 driver's own transaction handling is refused.
+    """A new connection left to the sqlite3 driver's own transaction handling is refused.
 
     That handling, the driver's default and what the application's engine
     keeps, opens a transaction only before a statement that changes data, so
@@ -562,6 +686,63 @@ def test_an_sqlite_connection_with_autocommit_false_is_used(tmp_path: Path) -> N
     finally:
         engine.dispose()
     assert current_revision(url) == head_revision()
+
+
+def test_an_sqlite_connection_with_autocommit_true_is_refused(tmp_path: Path) -> None:
+    """sqlite3's ``autocommit=True`` is refused, even with a transaction open on it.
+
+    In that mode the driver's commit() and rollback() do nothing, so a run
+    over such a connection could not end its own transaction. Given an
+    engine that emits BEGIN from its 'begin' event, the run used to start
+    inside a transaction, report success, and leave nothing behind once the
+    connection closed.
+    """
+    url = _sqlite_url(tmp_path, "autocommit-true.db")
+    engine = create_engine(url, connect_args={"autocommit": True})
+
+    @event.listens_for(engine, "begin")
+    def _begin(connection: Connection) -> None:
+        connection.exec_driver_sql("BEGIN")
+
+    try:
+        with engine.connect() as connection:
+            config = build_alembic_config(url)
+            config.attributes["connection"] = connection
+            with pytest.raises(CommandError, match="autocommit=True"):
+                command.upgrade(config, "head")
+    finally:
+        engine.dispose()
+    assert current_revision(url) is None
+    assert _table_names(url) == []
+
+
+def test_a_connection_inside_its_callers_transaction_migrates_inside_it(
+    database_url: str,
+) -> None:
+    """A handed connection on which the caller has begun a transaction is used, inside it.
+
+    Alembic leaves a transaction it did not begin to whoever began it, so the
+    run is kept only if the caller commits. Here the caller writes a row
+    first, which on SQLite is what opens a transaction on a connection from
+    build_engine, and rolls back after the run: the stamp it read inside its
+    transaction is gone, and so is every table of the chain.
+    """
+    engine = build_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("CREATE TABLE caller_table (id INTEGER PRIMARY KEY)"))
+            connection.execute(text("INSERT INTO caller_table (id) VALUES (1)"))
+            config = build_alembic_config(database_url)
+            config.attributes["connection"] = connection
+            command.upgrade(config, "head")
+            stamp = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
+            connection.rollback()
+    finally:
+        engine.dispose()
+    assert stamp == head_revision()
+    assert current_revision(database_url) is None
+    # On SQLite the caller's CREATE TABLE ran before its transaction began.
+    assert set(_table_names(database_url)) <= {"caller_table"}
 
 
 @pytest.mark.parametrize(
