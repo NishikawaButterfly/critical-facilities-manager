@@ -389,9 +389,11 @@ carrying a perfectly valid token.** It is the source that is locked, not the
 account — so a colleague behind the same office address is locked out too, by a
 mistake neither of them made. How wide "the source" is depends on how the
 installation is deployed: one that sits behind a proxy without being configured
-for it counts every user into a single source, so the lockout reaches everyone.
-If a 429 arrives that nobody near you can explain, that is a question for your
-administrator.
+for it also counts every user into a single shared source, so the lockout
+reaches everyone. A request can count against more than one source, your
+address and that shared one, and it is refused while any of them is locked;
+`Retry-After` is then the longest of the waits. If a 429 arrives that nobody
+near you can explain, that is a question for your administrator.
 
 What to do:
 
