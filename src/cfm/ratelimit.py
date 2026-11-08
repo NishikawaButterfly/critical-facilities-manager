@@ -20,8 +20,10 @@ An attempt can belong to more than one source. Which ones is decided in
 its docstring for what happens to requests that carry a forwarded header
 nobody vouched for. The attempt is refused while any of its sources is
 locked, and its failure counts against every one of them, so attempts
-that share one source never get past that source's budget, whatever else
-they present.
+that share one source get that source's budget and no more, whatever else
+they present, apart from attempts already in flight when it locks: the
+check runs before the token is looked up and the count after it, so
+attempts that pass the check together are all looked up.
 
 Memory stays bounded: once more than ``sweep_threshold`` sources are
 tracked, recording a failure first drops every source that is neither
@@ -61,9 +63,9 @@ def client_sources(request: Request, *, trusted_proxy: bool) -> frozenset[str]:
 
     Without it, the header is worth nothing, and as far as this function
     can tell neither is the address the request reports: uvicorn enables
-    proxy-header handling by default (trusting ``127.0.0.1``) and replaces
-    the client address with an entry from the header before any
-    application code runs. Such a request therefore counts against two
+    proxy-header handling by default (trusting ``127.0.0.1`` and ``::1``)
+    and replaces the client address with an entry from the header before
+    any application code runs. Such a request therefore counts against two
     sources. One is :data:`UNTRUSTED_FORWARDED_SOURCE`, shared by every
     request carrying the header, so that rotating the header buys no fresh
     failure budget: those attempts accumulate against one counter and lock
@@ -76,9 +78,10 @@ def client_sources(request: Request, *, trusted_proxy: bool) -> frozenset[str]:
     uvicorn from rewriting the address.
 
     What this cannot see past is an address uvicorn did substitute. A peer
-    uvicorn trusts is charged under whatever address its header named,
-    which may be somebody else's, and its own address keeps a budget for
-    its attempts without the header.
+    uvicorn trusts is charged under whatever its header named, which may be
+    somebody else's address or no address at all, and the lockout line
+    repeats it; its own address keeps a budget for its attempts without the
+    header.
 
     Requests with no forwarded header count against the address the
     application is given alone, which is the peer address whenever nothing
