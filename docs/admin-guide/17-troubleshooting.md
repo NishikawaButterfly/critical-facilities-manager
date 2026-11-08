@@ -163,8 +163,9 @@ A failure carrying that header while `CFM_TRUSTED_PROXY=false` counts against
 `untrusted-forwarded` and against the address the request reported, so one
 failure can log a line for each. Behind an undeclared proxy on the same host,
 uvicorn's defaults hand the application each client's own address, so those
-second lines name clients that change from one lockout to the next; there, the
-`untrusted-forwarded` line is the one that says what to fix: declare the proxy.
+second lines can name a different client from one lockout to the next; there,
+the `untrusted-forwarded` line is the one that says what to fix: declare the
+proxy.
 
 `/api/v1/health` keeps answering `200` throughout — verified — which is how you
 confirm the service itself is fine.

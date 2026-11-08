@@ -42,8 +42,9 @@ directly ([Running behind a reverse proxy](09-reverse-proxy.md)).
 
 This one is easy to get wrong in a way that looks fine.
 
-uvicorn enables proxy headers by default and trusts `127.0.0.1`, so it can
-replace the client address from `X-Forwarded-For` before the application looks.
+uvicorn enables proxy headers by default and trusts `127.0.0.1` and `::1`, so
+it can replace the client address from `X-Forwarded-For` before the application
+looks.
 The application answers that by never letting an address it cannot verify
 decide the count alone: with `CFM_TRUSTED_PROXY` at its default of `false`,
 every request carrying the header counts into one shared `untrusted-forwarded`

@@ -39,7 +39,7 @@ never warns. Check the effect, not the spelling.
 | `CFM_AUTH_MAX_FAILURES` | `10` | Failed authentications per source before lockout; `0` disables the limiter. |
 | `CFM_AUTH_FAILURE_WINDOW_SECONDS` | `60` | Sliding window in which those failures must fall. Minimum 1. |
 | `CFM_AUTH_LOCKOUT_SECONDS` | `300` | How long a locked source keeps getting `429`. Minimum 1. |
-| `CFM_TRUSTED_PROXY` | `false` | Attribute failures to the rightmost `X-Forwarded-For` entry. While it is `false`, requests carrying that header share one lockout bucket. Read [Running behind a reverse proxy](09-reverse-proxy.md) before leaving it or setting it. |
+| `CFM_TRUSTED_PROXY` | `false` | Attribute failures to the rightmost `X-Forwarded-For` entry. While it is `false`, a request carrying that header counts against one shared lockout bucket as well as against the address it reports. Read [Running behind a reverse proxy](09-reverse-proxy.md) before leaving it or setting it. |
 | `CFM_API_PREFIX` | `/api/v1` | Path every API route hangs under. |
 | `CFM_APP_NAME` | `Critical Facilities Manager API` | Title in the OpenAPI document, and the heading and browser title of the frontend. |
 | `CFM_APP_VERSION` | `0.3.0` | Version string reported by `/health`, `/docs`, and `/ui/config.json`. |
