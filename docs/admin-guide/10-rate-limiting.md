@@ -109,32 +109,88 @@ whoever shares that source — everyone behind an undeclared proxy, or everyone
 behind a declared one when the failures land on its own address
 ([Running behind a reverse proxy](09-reverse-proxy.md)).
 
-## Which address gets locked
+## Which sources get locked
 
 Whatever the application sees as the client address — which is not always the
 client's, because uvicorn's proxy-header handling can replace it before the
-application looks. Two rules follow from that:
+application looks — and, for a request carrying a forwarded header that nobody
+vouches for, one shared source besides. Three rules follow from that:
 
 - **A request with no `X-Forwarded-For` header** counts against the address the
   application is handed, which is the socket peer unless something upstream
   substituted one.
-- **A request carrying that header** counts against its rightmost entry when
-  `CFM_TRUSTED_PROXY=true`, and otherwise against a single shared source named
-  `untrusted-forwarded` — whatever address the header claims, and whatever
-  address the application was handed. An unverifiable address is not allowed to
-  divide the counters, or rotating the header would buy a fresh budget per
-  value.
+- **A request carrying that header, with `CFM_TRUSTED_PROXY=true`,** counts
+  against the header's rightmost entry.
+- **A request carrying that header, with `CFM_TRUSTED_PROXY=false`,** counts
+  against two sources: a single shared one named `untrusted-forwarded`,
+  whatever address the header claims, and the address the application was
+  handed. The shared one keeps an unverifiable address from dividing the
+  counters, or rotating the header would buy a fresh budget per value. The
+  address keeps a client from reaching a second budget by leaving the header
+  out.
 
-Verified with the defaults: three failures carrying `X-Forwarded-For:
-198.51.100.9, 203.0.113.7` locked `untrusted-forwarded`, and a fourth attempt
-that changed the header to `192.0.2.123` was refused `429` rather than starting
-a new count.
+A request is refused while **any** of its sources is locked, and its
+`Retry-After` is the longest of their remaining lockouts, so that after waiting
+that long none of the sources it was refused for is still locked. A failure
+counts against every source the request had. Each source keeps its own count
+and locks on its own, and each lockout logs its own line, so one failure can
+lock two sources and log two lines. A failure that reaches a source already
+locked, from a request that was checked just before the lock was set, is not
+counted: a lockout ends when it was set to end.
+
+Verified against `uvicorn cfm.main:app --no-proxy-headers`, from the loopback,
+with the limits at 3 failures, a 60-second window and a 120-second lockout:
+three failures carrying `X-Forwarded-For: 198.51.100.9, 203.0.113.7` locked both
+of their sources at once,
+
+```
+Locked authentication source 127.0.0.1 for 120 seconds after 3 failures within 60 seconds.
+Locked authentication source untrusted-forwarded for 120 seconds after 3 failures within 60 seconds.
+```
+
+and after that an attempt that changed the header to `192.0.2.123` was refused
+`429` rather than starting a new count, and so were four attempts that left the
+header out.
 
 The mechanism, the behaviour of each uvicorn variant, and what the shared
 bucket costs a deployment that never declared its proxy are in
-[Running behind a reverse proxy](09-reverse-proxy.md). It is required reading
+[Running behind a reverse proxy](09-reverse-proxy.md), together with the one
+case that counting the address cannot cover: a peer that uvicorn trusts to
+rewrite its address is seen only under the address its header names, so it
+keeps a second budget and can spend somebody else's. It is required reading
 before tuning anything here — a limiter counting the wrong address is worse
 than none, because it looks like it is working.
+
+### What counting two sources costs
+
+`scripts/measure_auth_limiter.py` times the limiter's two operations with one
+source and with two, and then whole failed authentications through the
+application: a token that does not exist, sent in process to the ASGI
+application on a fresh SQLite database, with and without the header. Its
+docstring says how each figure is taken. A run with its defaults, on a laptop:
+
+```
+$ python scripts/measure_auth_limiter.py
+Python 3.13.3, SQLite 3.49.1
+Limiter, best of 2000 runs of 500 calls, microseconds per call:
+                    one source  two sources  difference
+  lockout check           0.59         0.68       +0.09
+  failure path            1.60         2.44       +0.84
+Failed authentication through the ASGI application, median of 2000 requests each, microseconds:
+  without the header (one source)     3141.6
+  with the header (two sources)       3150.2
+```
+
+The lockout check runs before every authentication and the failure path after
+every failed one. A failed attempt counted against two sources therefore costs
+the limiter about 0.9 µs more than one counted against one, and a successful
+attempt carrying the header about 0.1 µs more. Two more runs gave the same
+limiter figures to within 0.04 µs.
+
+The failed authentication itself — the token hashed and looked up, the refusal
+written — took a median of 2.4 to 3.2 ms over the three runs, and the two kinds
+of request differed by between −3 and +9 µs, from one run to the next. The
+bookkeeping does not show at that scale: it is under 0.04% of the attempt.
 
 ## What this does not defend against
 
@@ -166,9 +222,10 @@ the failure count, and the window. Alert on:
 - **Any lockout naming `untrusted-forwarded`** — requests are arriving with an
   `X-Forwarded-For` header while `CFM_TRUSTED_PROXY` is `false`. The throttle
   is doing its job, but every client sending that header is sharing one bucket
-  and can lock the others out. Declare the proxy, or stop the header from
-  reaching the application ([Running behind a reverse
-  proxy](09-reverse-proxy.md)).
+  and can lock the others out. The failure that locks it can lock the address
+  it came from as well, and then logs a second line, naming that address.
+  Declare the proxy, or stop the header from reaching the application
+  ([Running behind a reverse proxy](09-reverse-proxy.md)).
 - **No lockouts ever, on an internet-facing installation** — plausible, but
   worth confirming the limiter is not disabled.
 

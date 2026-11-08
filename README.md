@@ -32,8 +32,9 @@ describes what the platform is and how it is built.
   time on lookup. Failed authentications are throttled per network source
   and repeat offenders are locked out; a source the installation cannot
   verify — a request carrying an `X-Forwarded-For` header while no proxy is
-  trusted — is not allowed its own counter, and shares one with every other
-  such request (see
+  trusted — is not allowed to decide the count alone: the request counts
+  against one counter shared with every other such request as well as
+  against the address it reports, and is refused while either is locked (see
   [Rate limiting in production](docs/admin-guide/10-rate-limiting.md) and
   [Running behind a reverse proxy](docs/admin-guide/09-reverse-proxy.md)).
   Users have no passwords and cannot self-register — the web interface
