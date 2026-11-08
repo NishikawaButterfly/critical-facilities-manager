@@ -26,6 +26,7 @@ def test_the_measurement_script_runs() -> None:
     )
     assert result.returncode == 0, result.stderr
     for label in (
+        "working out the sources",
         "lockout check",
         "failure path",
         "without the header (one source)",

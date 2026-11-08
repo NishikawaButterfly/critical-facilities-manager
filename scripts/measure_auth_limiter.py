@@ -1,4 +1,4 @@
-"""Measure what the authentication limiter costs with one source and with two.
+"""Measure what the authentication path costs with one source and with two.
 
 Usage:
     python scripts/measure_auth_limiter.py [--number N] [--repeat R]
@@ -6,9 +6,14 @@ Usage:
 
 A failed authentication counts against one source, or against two when the
 request carries an X-Forwarded-For header that no trusted proxy vouches for
-(see ``cfm.ratelimit.client_sources``). Two limiter operations sit on the
-authentication path, and both are timed with one source and with two:
+(see ``cfm.ratelimit.client_sources``). Three steps on the authentication
+path depend on that, and each is timed with one source and with two:
 
+- working out the sources, which runs before every authentication:
+  ``client_sources`` on a request from one peer address without the header,
+  and on the same request carrying it, with the request's headers already
+  read, as the bearer scheme has read them by the time the sources are
+  worked out;
 - the lockout check, which runs before every authentication, for sources
   that have failed before and are not locked;
 - the failure path, which runs after every failed authentication, in a
@@ -17,7 +22,7 @@ authentication path, and both are timed with one source and with two:
   one short of the default limit of ten.
 
 Each figure is the best of R timeit runs of N calls, in microseconds per
-call. The four timings take turns, one run each per repeat, so a change in
+call. The six timings take turns, one run each per repeat, so a change in
 the machine's speed while the script runs lands on all of them alike; many
 short runs rather than a few long ones make it likelier that the best of
 them saw the machine undisturbed.
@@ -47,12 +52,12 @@ from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from starlette.types import Message, Scope
 
 from cfm.config import Settings
 from cfm.main import create_app
-from cfm.ratelimit import UNTRUSTED_FORWARDED_SOURCE, AuthRateLimiter
+from cfm.ratelimit import UNTRUSTED_FORWARDED_SOURCE, AuthRateLimiter, client_sources
 
 # The documented defaults of CFM_AUTH_MAX_FAILURES,
 # CFM_AUTH_FAILURE_WINDOW_SECONDS and CFM_AUTH_LOCKOUT_SECONDS.
@@ -67,6 +72,10 @@ ONE_SOURCE = frozenset({PEER_ADDRESS})
 TWO_SOURCES = frozenset({UNTRUSTED_FORWARDED_SOURCE, PEER_ADDRESS})
 
 API_PREFIX = "/api/v1"
+# A request from the peer address without the header, and the same request
+# carrying one that no trusted proxy vouches for.
+PLAIN_HEADERS = [(b"host", b"testserver"), (b"authorization", b"Bearer not-a-token")]
+FORWARDED_HEADERS = [*PLAIN_HEADERS, (b"x-forwarded-for", b"203.0.113.7")]
 UNAUTHORIZED = 401
 # Requests of each kind sent and discarded before the timed ones.
 WARMUP_REQUESTS = 50
@@ -96,16 +105,47 @@ def make_limiter(clock: Callable[[], float] = time.monotonic) -> AuthRateLimiter
     )
 
 
-def time_limiter(*, number: int, repeat: int) -> dict[tuple[str, int], float]:
-    """Microseconds per call of each operation, keyed by name and source count.
+def request_scope(headers: list[tuple[bytes, bytes]]) -> Scope:
+    """The scope of GET /api/v1/me from the peer address, with these headers."""
+    return {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": f"{API_PREFIX}/me",
+        "raw_path": f"{API_PREFIX}/me".encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": headers,
+        "client": (PEER_ADDRESS, 40000),
+        "server": ("testserver", 80),
+    }
 
-    Every repeat runs each of the four timings once, in turn, so a change in
+
+def read_request(headers: list[tuple[bytes, bytes]]) -> Request:
+    """A request whose headers have been read, as the bearer scheme reads them."""
+    request = Request(request_scope(headers))
+    request.headers.get("authorization")
+    return request
+
+
+def time_steps(*, number: int, repeat: int) -> dict[tuple[str, int], float]:
+    """Microseconds per call of each step, keyed by name and source count.
+
+    Every repeat runs each of the six timings once, in turn, so a change in
     the machine's speed while the script runs lands on all of them alike,
     and the best of the repeats is kept for each.
     """
     statements: dict[tuple[str, int], Callable[[], object]] = {}
     limiters: list[tuple[AuthRateLimiter, frozenset[str]]] = []
-    for sources in (ONE_SOURCE, TWO_SOURCES):
+    for headers, sources in ((PLAIN_HEADERS, ONE_SOURCE), (FORWARDED_HEADERS, TWO_SOURCES)):
+        request = read_request(headers)
+        if client_sources(request, trusted_proxy=False) != sources:
+            raise RuntimeError(f"the request does not count against {sorted(sources)}")
+        statements["working out the sources", len(sources)] = partial(
+            client_sources, request, trusted_proxy=False
+        )
         checked = make_limiter()
         for _ in range(MAX_FAILURES - 1):
             checked.record_failures(sources)
@@ -133,20 +173,7 @@ async def failed_authentication(
     Returns the response status and the time the application took, in
     microseconds, from the call until it returned.
     """
-    scope: Scope = {
-        "type": "http",
-        "asgi": {"version": "3.0"},
-        "http_version": "1.1",
-        "method": "GET",
-        "scheme": "http",
-        "path": f"{API_PREFIX}/me",
-        "raw_path": f"{API_PREFIX}/me".encode(),
-        "query_string": b"",
-        "root_path": "",
-        "headers": headers,
-        "client": (PEER_ADDRESS, 40000),
-        "server": ("testserver", 80),
-    }
+    scope = request_scope(headers)
     request_sent = False
     response_complete = asyncio.Event()
     status = 0
@@ -173,8 +200,6 @@ async def failed_authentication(
 
 async def time_failed_authentications(requests: int) -> tuple[float, float]:
     """Median microseconds of a failed authentication without and with the header."""
-    plain = [(b"host", b"testserver"), (b"authorization", b"Bearer not-a-token")]
-    forwarded = [*plain, (b"x-forwarded-for", b"203.0.113.7")]
     timings: dict[str, list[float]] = {"plain": [], "forwarded": []}
     with tempfile.TemporaryDirectory(prefix="cfm-measure-", ignore_cleanup_errors=True) as name:
         directory = Path(name)
@@ -192,7 +217,7 @@ async def time_failed_authentications(requests: int) -> tuple[float, float]:
             for round_index in range(WARMUP_REQUESTS + requests):
                 if round_index % ROUNDS_PER_LIMITER == 0:
                     application.state.auth_limiter = make_limiter()
-                for kind, headers in (("plain", plain), ("forwarded", forwarded)):
+                for kind, headers in (("plain", PLAIN_HEADERS), ("forwarded", FORWARDED_HEADERS)):
                     status, elapsed = await failed_authentication(application, headers)
                     if status != UNAUTHORIZED:
                         raise RuntimeError(f"expected 401 for a missing token, got {status}")
@@ -202,7 +227,7 @@ async def time_failed_authentications(requests: int) -> tuple[float, float]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Measure the authentication limiter.")
+    parser = argparse.ArgumentParser(description="Measure the authentication path.")
     parser.add_argument(
         "--number", type=int, default=500, help="Calls per timeit run (default: 500)."
     )
@@ -219,12 +244,15 @@ def main() -> int:
     number, repeat = arguments.number, arguments.repeat
 
     print(f"Python {platform.python_version()}, SQLite {sqlite3.sqlite_version}")
-    print(f"Limiter, best of {repeat} runs of {number} calls, microseconds per call:")
-    print(f"  {'':16}{'one source':>12}{'two sources':>13}{'difference':>12}")
-    timings = time_limiter(number=number, repeat=repeat)
-    for label in ("lockout check", "failure path"):
+    print(
+        f"Steps on the authentication path, best of {repeat} runs of {number} calls, "
+        "microseconds per call:"
+    )
+    print(f"  {'':24}{'one source':>12}{'two sources':>13}{'difference':>12}")
+    timings = time_steps(number=number, repeat=repeat)
+    for label in ("working out the sources", "lockout check", "failure path"):
         one, two = timings[label, 1], timings[label, 2]
-        print(f"  {label:16}{one:12.2f}{two:13.2f}{two - one:+12.2f}")
+        print(f"  {label:24}{one:12.2f}{two:13.2f}{two - one:+12.2f}")
 
     plain, forwarded = asyncio.run(time_failed_authentications(arguments.requests))
     print(
