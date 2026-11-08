@@ -23,11 +23,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Append-only rows can no longer be replaced on SQLite: an insert that
   collides with an existing row of an audit or evidence table is refused, on
   the row's id and on every other key the table has, and tests show the
-  PostgreSQL triggers refusing `ON CONFLICT DO UPDATE` and `MERGE`.
-  Compatibility: on SQLite, `INSERT OR IGNORE` and `ON CONFLICT DO NOTHING`
-  into those tables fail when they meet a stored row instead of skipping it,
-  and every colliding insert fails with the table's append-only message
-  instead of the message of the key it collides on. (#61)
+  PostgreSQL triggers refusing `ON CONFLICT DO UPDATE` and `MERGE`. An insert
+  that would store a row of those tables under a negative rowid is refused as
+  well, so that no row added by hand can make the guard refuse the
+  application's own inserts. Compatibility: on SQLite, `INSERT OR IGNORE` and
+  `ON CONFLICT DO NOTHING` into those tables fail when they meet a stored row
+  instead of skipping it, every colliding insert fails with the table's
+  append-only message instead of the message of the key it collides on, and
+  an insert naming a negative rowid, which is the id in every one of those
+  tables but `evidence_objects`, fails. Migration `0005` refuses to run,
+  before changing anything, while one of those tables already holds a row
+  under a negative rowid. (#61)
 
 ## [0.3.0] - 2026-09-12
 
