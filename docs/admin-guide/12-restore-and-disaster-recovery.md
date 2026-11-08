@@ -45,29 +45,36 @@ one, which reports healthy and fails only on download
 
 **The append-only triggers came back with the schema.** They are part of the
 schema, created by migrations `0004` and `0005`, so a restore of the database
-restores them. On a restore made the same way of a database at `0005`:
+restores them. On a restore made the same way of a database at `0005`, which
+held 86 audit entries:
 
 ```
 $ sqlite3 cfm.db "SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name"
 trg_audit_entries_no_delete
+trg_audit_entries_no_negative_rowid
 trg_audit_entries_no_replace
 trg_audit_entries_no_update
 trg_commissioning_evidence_no_delete
+trg_commissioning_evidence_no_negative_rowid
 trg_commissioning_evidence_no_replace
 trg_commissioning_evidence_no_update
 trg_evidence_attachments_no_delete
+trg_evidence_attachments_no_negative_rowid
 trg_evidence_attachments_no_replace
 trg_evidence_attachments_no_update
 trg_evidence_objects_no_delete
+trg_evidence_objects_no_negative_rowid
 trg_evidence_objects_no_replace
 trg_evidence_objects_no_update
 ```
 
-Twelve triggers, three per protected table: one refuses `UPDATE`, one `DELETE`,
-and one an `INSERT` that collides with a stored row, which SQLite's
-`INSERT OR REPLACE` would otherwise resolve by deleting that row unseen. And
-they fire — every one of these was attempted against that restored database on
-a direct connection, and every one was refused:
+Sixteen triggers, four per protected table: one refuses `UPDATE`, one `DELETE`,
+one an `INSERT` that collides with a stored row, which SQLite's
+`INSERT OR REPLACE` would otherwise resolve by deleting that row unseen, and one
+an `INSERT` that would store a row under a negative rowid, where it could make
+the third refuse the application's own inserts. And they fire — every one of
+these was attempted against that restored database on a direct connection, and
+every one was refused:
 
 ```
 UPDATE audit_entries SET actor='someone-else'
@@ -84,6 +91,10 @@ INSERT OR REPLACE INTO audit_entries (id, occurred_at, actor, entity_type, entit
      SELECT id, occurred_at, 'someone-else', entity_type, entity_id, action
        FROM audit_entries WHERE id = 86
   -> IntegrityError: audit_entries is append-only: an INSERT colliding with an existing row is not allowed
+INSERT INTO audit_entries (id, occurred_at, actor, entity_type, entity_id, action)
+     SELECT -1, occurred_at, 'someone-else', entity_type, entity_id, action
+       FROM audit_entries WHERE id = 86
+  -> IntegrityError: audit_entries is append-only: an INSERT under a negative rowid is not allowed
 ```
 
 On PostgreSQL the same protection is one statement-level trigger per table
@@ -103,7 +114,7 @@ $ curl -s $API/health
 $ curl -s -H "Authorization: Bearer $TOKEN" "$API/audit-entries?limit=1" | grep -o '"total":[0-9]*'
 $ curl -s -o /tmp/probe -w "%{http_code}\n" -H "Authorization: Bearer $TOKEN" \
     $API/evidence-objects/<a known object id>/content
-$ sqlite3 cfm.db "SELECT count(*) FROM sqlite_master WHERE type='trigger'"     # expect 12
+$ sqlite3 cfm.db "SELECT count(*) FROM sqlite_master WHERE type='trigger'"     # expect 16
 ```
 
 Keep a known object id with the backup documentation. Hunting for one during a
