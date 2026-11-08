@@ -264,6 +264,7 @@ writer against a SQLite deployment.
 IntegrityError: audit_entries is append-only: UPDATE is not allowed
 IntegrityError: evidence_attachments is append-only: DELETE is not allowed
 IntegrityError: audit_entries is append-only: an INSERT colliding with an existing row is not allowed
+IntegrityError: audit_entries is append-only: an INSERT under a negative rowid is not allowed
 ```
 
 **Cause.** Working as designed — the triggers from migrations `0004` and
@@ -275,12 +276,15 @@ which used to skip the row without an error. A script that copies rows in with
 either now fails at the first row already stored, and the statement carrying it
 inserts nothing at all.
 
-If the application's own writes start failing with the third message, look for
-a row somebody stored by hand under rowid `-1`, which is the `id` in every
-protected table but `evidence_objects`. SQLite shows the trigger `-1` for every
-rowid it has yet to assign, so that row collides with every insert that leaves
-the rowid to the database, and every insert the application makes does. Removing
-the row is a deletion like any other.
+The fourth answers, on SQLite, an insert that would store a row under a
+negative rowid, which is the `id` in every protected table but
+`evidence_objects`. SQLite shows a `BEFORE INSERT` trigger `-1` for every rowid
+it has yet to assign (its documentation leaves that value undefined), so a row
+under `-1` would collide with every insert the application makes. Refusing
+negative rowids keeps that row from existing: SQLite numbers a new row below
+zero only after an insert has named a negative rowid, and the application
+never names one. The message therefore comes from an insert by hand, and the
+row it carried was not stored.
 
 **Fix.** If you genuinely need to delete, there is one supported route and it is
 a migration; read [Retention and legal hold](16-retention-and-legal-hold.md)
@@ -314,6 +318,37 @@ refuses before comparing.
 
 **Fix.** `alembic upgrade head`, then `check` again. A clean check reads
 `No new upgrade operations detected.` — and says nothing about triggers.
+
+### "Revision 0005 cannot be applied while a protected table holds a row under a negative rowid"
+
+```
+$ alembic upgrade head
+INFO  [alembic.runtime.migration] Running upgrade 0004 -> 0005, Append-only enforcement against inserts that replace a stored row.
+ERROR [alembic.util.messaging] Revision 0005 cannot be applied while a protected table holds a row under a negative rowid: audit_entries (-1). Such rows exist only in a table where an insert has named a negative rowid, which the application never does. The guards this revision adds refuse such inserts, and rows like these can make them refuse the inserts that leave the rowid to the database as well. Remove the rows, which is a deletion like any other (see 'Retention and legal hold' in the admin guide), and run the upgrade again.
+FAILED: Revision 0005 cannot be applied while a protected table holds a row under a negative rowid: audit_entries (-1). Such rows exist only in a table where an insert has named a negative rowid, which the application never does. The guards this revision adds refuse such inserts, and rows like these can make them refuse the inserts that leave the rowid to the database as well. Remove the rows, which is a deletion like any other (see 'Retention and legal hold' in the admin guide), and run the upgrade again.
+```
+
+**Cause.** Before the upgrade, an insert by hand stored a row of a protected
+table under a negative rowid. If that was the table's highest rowid, SQLite
+numbered the next rows written to the table below zero too, up to `-1`, the
+application's included. Beside the guards `0005` installs, a row under `-1`
+would collide with every insert the application makes, and a table whose
+highest rowid is negative would have its next row numbered below zero, which
+the new guard refuses. So `0005` checks first and stops before changing
+anything: `alembic current` still prints `0004`. The message names each table
+concerned, with up to ten of its rowids.
+
+**Fix.** Look at the rows first, and tell apart the ones inserted by hand from
+any the application wrote after them:
+
+```
+SELECT rowid, * FROM audit_entries WHERE rowid < 0;
+```
+
+and the same for `commissioning_evidence`, `evidence_attachments` and
+`evidence_objects`. Removing them is a deletion like any other, through the
+route in [Retention and legal hold](16-retention-and-legal-hold.md), which also
+says what to record outside the system. Then run the upgrade again.
 
 ### "table site_grants already exists"
 

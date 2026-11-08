@@ -31,10 +31,12 @@ INSERT OR REPLACE INTO audit_entries (id, occurred_at, actor, entity_type, entit
   -> IntegrityError: audit_entries is append-only: an INSERT colliding with an existing row is not allowed
 ```
 
-Twelve triggers on SQLite: an `UPDATE` and a `DELETE` guard per table from
-`0004`, and from `0005` a guard per table that refuses an `INSERT` colliding
-with a stored row, which `INSERT OR REPLACE` would otherwise resolve by deleting
-that row without firing the delete guard. On PostgreSQL, one statement-level
+Sixteen triggers on SQLite: an `UPDATE` and a `DELETE` guard per table from
+`0004`, and from `0005` two insert guards per table. One refuses an `INSERT`
+colliding with a stored row, which `INSERT OR REPLACE` would otherwise resolve
+by deleting that row without firing the delete guard; the other refuses an
+`INSERT` that would store a row under a negative rowid, where it could make the
+first refuse the application's own inserts. On PostgreSQL, one statement-level
 trigger per table over a `plpgsql` function, which also covers `TRUNCATE` and
 refuses `INSERT … ON CONFLICT DO UPDATE` and `MERGE`; PostgreSQL has no
 `REPLACE`. They come back with the schema on a restore — verified
@@ -81,7 +83,7 @@ Exactly one, and it is deliberately expensive: **a migration that drops the
 trigger, deletes, and recreates it.** The full cycle was executed on a copy of
 a real database.
 
-At head, with 12 triggers and 86 audit entries, the delete is refused. Then:
+At head, with 16 triggers and 86 audit entries, the delete is refused. Then:
 
 ```
 $ alembic downgrade 0003
@@ -105,7 +107,7 @@ INFO  [alembic.runtime.migration] Running upgrade 0003 -> 0004, Database-level a
 INFO  [alembic.runtime.migration] Running upgrade 0004 -> 0005, Append-only enforcement against inserts that replace a stored row.
 ```
 
-Triggers: 12 again. Audit rows: 82.
+Triggers: 16 again. Audit rows: 82.
 
 For a real deletion you would write your own migration rather than riding the
 downgrades of `0005` and `0004` — one that drops the trigger, performs exactly

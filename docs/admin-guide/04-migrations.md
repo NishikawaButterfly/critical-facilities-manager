@@ -166,10 +166,10 @@ FAILED: Target database is not up to date.
 
 What `check` does **not** prove is as important. Alembic's autogenerate cannot
 see triggers, so the append-only triggers installed by `0004` and `0005` are
-invisible to it. A green `check` says nothing about whether they exist. The project's test
-suite asserts them separately; on a live database, look for yourself
-([Restore and disaster recovery](12-restore-and-disaster-recovery.md) shows the
-query).
+invisible to it. A green `check` says nothing about whether they exist. The
+project's test suite asserts them separately; on a live database, look for
+yourself ([Restore and disaster recovery](12-restore-and-disaster-recovery.md)
+shows the query).
 
 ## Downgrades, and why they are not a rollback
 
