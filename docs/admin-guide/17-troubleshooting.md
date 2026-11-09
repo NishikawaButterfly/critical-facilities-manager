@@ -329,12 +329,12 @@ FAILED: Revision 0005 cannot be applied while a protected table holds a row unde
 ```
 
 **Cause.** Before the upgrade, an insert by hand stored a row of a protected
-table under a negative rowid. If that was the table's highest rowid, SQLite
-numbered the next rows written to the table below zero too, up to `-1`, the
-application's included. Beside the guards `0005` installs, a row under `-1`
-would collide with every insert the application makes, and a table whose
-highest rowid is negative would have its next row numbered below zero, which
-the new guard refuses. So `0005` checks first and stops before changing
+table under a negative rowid. If that rowid was below `-1` and the table's
+highest, SQLite numbered the next rows written to the table below zero too, up
+to `-1`, the application's included. Beside the guards `0005` installs, a row
+under `-1` would collide with every insert the application makes, and a table
+whose highest rowid is below `-1` would have its next row numbered below zero,
+which the new guard refuses. So `0005` checks first and stops before changing
 anything: `alembic current` still prints `0004`. The message names each table
 concerned, with up to ten of its rowids.
 
