@@ -346,7 +346,8 @@ SELECT rowid, * FROM audit_entries WHERE rowid < 0;
 ```
 
 and the same for `commissioning_evidence`, `evidence_attachments` and
-`evidence_objects`. Removing them is a deletion like any other, through the
+`evidence_objects`. Every one of them has to go before `0005` applies, the
+application's included. Removing them is a deletion like any other, through the
 route in [Retention and legal hold](16-retention-and-legal-hold.md), which also
 says what to record outside the system. Then run the upgrade again.
 
