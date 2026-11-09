@@ -60,7 +60,7 @@ Building and installing the wheel (`pip install .`) puts this into
   `demo.py`, the `api/` routers, and the `services/` layer.
 - **The migration chain**: `migrations/env.py`, `migrations/script.py.mako`,
   and `migrations/versions/0001_baseline.py` through
-  `0004_append_only_triggers.py`.
+  `0005_replace_guards.py`.
 - **The web frontend**: `web/index.html`, `web/app.css`, `web/app.js`,
   `web/api.js`, `web/dom.js`, `web/order-actions.json`, and
   `web/views/{tree,board,audit}.js`. There is no build step; the files in the
@@ -103,7 +103,7 @@ from cfm.bootstrap import bootstrap_admin
 result = bootstrap_admin('installed-admin', 'Installed Admin')
 print('bootstrapped:', result.username, '| token length:', len(result.token))
 "
-head revision: 0004 | database now at: 0004
+head revision: 0005 | database now at: 0005
 bootstrapped: installed-admin | token length: 43
 ```
 

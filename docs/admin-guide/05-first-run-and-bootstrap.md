@@ -29,7 +29,7 @@ Options:
 
 **The script migrates an empty database itself.** Verified: run against a
 SQLite path that did not exist, it created the file, brought it to head, and
-created the admin — `alembic current` afterwards printed `0004 (head)`. You do
+created the admin — `alembic current` afterwards printed `0005 (head)`. You do
 not need a separate `alembic upgrade head` before the first bootstrap. It will
 not migrate a database that has tables but no revision stamp; that case is
 reported instead, with the same advice as

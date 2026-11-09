@@ -124,8 +124,9 @@ never in the database, never in a backup of it
 can create users and tokens without an audit entry
 ([First run and bootstrap](05-first-run-and-bootstrap.md#if-the-bootstrap-token-is-lost)).
 What it cannot do is rewrite history: the append-only triggers refuse every
-`UPDATE` and `DELETE` on the audit and evidence tables whatever role connects
-— verified, including on a restored database
+`UPDATE` and `DELETE` on the audit and evidence tables whatever role connects,
+and every insert that would take a stored row's place — verified, including on
+a restored database
 ([Restore and disaster recovery](12-restore-and-disaster-recovery.md)). On
 PostgreSQL a superuser can still drop the trigger; the protection is against
 silent mutation, not against a deliberate, visible schema change.
