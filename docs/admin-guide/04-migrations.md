@@ -133,6 +133,10 @@ INFO  [alembic.runtime.migration] Will assume transactional DDL.
 sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) database is locked
 ```
 
+The test suite asserts that `current`, `check` and an upgrade with nothing
+left to do each stop while another connection holds the lock, and that a run
+holds the lock before it has written anything.
+
 A connection that only reads holds a command up as well, at its end rather
 than its start. In the rollback-journal mode the database runs in
 ([Database setup](03-database-setup.md)), a transaction begun with
@@ -181,12 +185,12 @@ emits `BEGIN` from its `begin` event, the recipe in SQLAlchemy's SQLite
 documentation, or from one created with `connect_args={"autocommit": False}`
 on Python 3.12 or later. A connection already inside a transaction its caller
 began is accepted too, which on SQLite a connection from `build_engine` is once
-something has been written through it. The run then happens inside the
-caller's transaction, because Alembic leaves a transaction it did not begin to
-whoever began it. Executed on SQLite: the run was kept when the caller
-committed, and nothing of it was left when the caller rolled back or closed the
-connection without committing. The helpers in `cfm.migrate` pass a URL and
-never need any of this.
+a statement that changes data has run through it; DDL or reads alone do not
+open one. The run then happens inside the caller's transaction, because
+Alembic leaves a transaction it did not begin to whoever began it. Executed on
+SQLite: the run was kept when the caller committed, and nothing of it was left
+when the caller rolled back or closed the connection without committing. The
+helpers in `cfm.migrate` pass a URL and never need any of this.
 
 ### Scripts printed with `--sql`
 
