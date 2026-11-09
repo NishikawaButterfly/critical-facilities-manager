@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import io
 import shutil
+import sqlite3
+from collections.abc import Callable
 from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,7 +42,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.util import CommandError
 from sqlalchemy import Connection, Engine, create_engine, event, inspect, text
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
 from cfm.config import Settings
 from cfm.database import Base, build_engine
@@ -313,6 +315,21 @@ _RAISE_ROLLBACK_IN_A_TRIGGER = (
     " BEGIN SELECT RAISE(ROLLBACK, 'injected'); END\")",
     '    op.execute("INSERT INTO injected_table (id) VALUES (2)")',
     *_CATCH_AND_CARRY_ON,
+)
+# A second connection asks for the write lock without waiting, and the
+# revision fails if it gets it.
+_ASK_FOR_THE_WRITE_LOCK = (
+    "import sqlite3",
+    "other = sqlite3.connect(op.get_bind().engine.url.database, timeout=0)",
+    "try:",
+    '    other.execute("BEGIN IMMEDIATE")',
+    "except sqlite3.OperationalError as error:",
+    '    if "database is locked" not in str(error):',
+    "        raise",
+    "else:",
+    '    raise RuntimeError("a second connection got the write lock during the run")',
+    "finally:",
+    "    other.close()",
 )
 
 
@@ -607,6 +624,59 @@ def test_an_autocommit_block_still_commits_part_of_a_run(tmp_path: Path) -> None
 
     assert current_revision(url) == INJECTED_REVISION
     assert {"injected_table", "injected_inside", "injected_after"} <= set(_table_names(url))
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        pytest.param(command.current, id="current"),
+        pytest.param(command.check, id="check"),
+        pytest.param(lambda config: command.upgrade(config, "head"), id="upgrade"),
+    ],
+)
+def test_every_command_takes_the_write_lock_before_it_reads(
+    tmp_path: Path, run: Callable[[Config], None]
+) -> None:
+    """Every command that opens an SQLite database takes its write lock before reading it.
+
+    The run begins with BEGIN IMMEDIATE, so while another connection holds
+    the lock, a command stops before it reads the stamp, even one that would
+    change nothing: current, check, or an upgrade with nothing left to do. A
+    plain BEGIN would let each of them read at once, and two upgrades started
+    together could both read the same stamp. timeout=0 in the URL makes the
+    command stop at once instead of after the driver's five-second wait.
+    """
+    url = _sqlite_url(tmp_path, "locked.db")
+    upgrade_to_head(url)
+    other = sqlite3.connect(tmp_path / "locked.db", timeout=0)
+    try:
+        other.execute("BEGIN IMMEDIATE")
+        with pytest.raises(OperationalError, match="database is locked"):
+            run(build_alembic_config(f"{url}?timeout=0"))
+    finally:
+        other.close()
+
+
+def test_a_run_holds_the_write_lock_before_its_first_write(tmp_path: Path) -> None:
+    """A run keeps SQLite's write lock from its first statement, not from its first write.
+
+    The injected revision is the only one the run applies, and nothing has
+    been written when a second connection asks for the write lock from
+    inside it, without waiting: the request is refused. A run begun with a
+    plain BEGIN would hold only a read lock at that point, and the second
+    connection would get the write lock.
+    """
+    url = _sqlite_url(tmp_path, "held.db")
+    start = head_revision()
+    assert start is not None
+    config = _injected_config(
+        _scripts_with_a_revision_after_head(tmp_path, _ASK_FOR_THE_WRITE_LOCK), url
+    )
+    command.upgrade(config, start)
+
+    command.upgrade(config, "head")
+
+    assert current_revision(url) == INJECTED_REVISION
 
 
 def test_an_sqlite_connection_without_explicit_transactions_is_refused(tmp_path: Path) -> None:
