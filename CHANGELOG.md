@@ -18,6 +18,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `build` install by themselves unless build isolation is turned off; a build
   without isolation also needs `packaging` 24.2 or later.
 
+### Fixed
+
+- A failed upgrade leaves an SQLite database exactly at the revision it
+  started from; the whole upgrade runs as one transaction, as it already did
+  on PostgreSQL, and a revision that carries on after SQLite has rolled that
+  transaction back by itself is stopped at its next statement. Downgrades run
+  the same way. A script printed with `--sql` is wrapped in one transaction on
+  both databases; on SQLite, applying it is one transaction only if whatever
+  applies it stops at the first error without committing. Compatibility: on
+  SQLite, every Alembic command that opens the database holds its write lock
+  while it runs, and gives up after five seconds if another connection holds
+  that lock or keeps a read transaction open; a connection handed to the
+  migrations in `config.attributes["connection"]` is refused unless the run
+  can be one transaction on it. (#60)
+
 ## [0.3.0] - 2026-09-12
 
 ### Changed

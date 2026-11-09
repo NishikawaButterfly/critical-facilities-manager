@@ -53,6 +53,14 @@ $ alembic check
 No new upgrade operations detected.
 ```
 
+If the upgrade fails instead, it has changed nothing: it runs as one
+transaction ([Migrations](04-migrations.md#a-failed-run-changes-nothing)), and
+`alembic current` still prints the revision you wrote down in step 1. Fix the
+cause and run it again, or reinstall the version you upgraded from, which still
+matches the database; there is nothing to restore. On SQLite the upgrade holds
+the database's write lock from start to finish, and with the service stopped
+nothing else competes for it.
+
 `check` compares the live schema against the models. It cannot see triggers, so
 on any release that touches the append-only tables, also confirm they still
 exist ([Restore and disaster recovery](12-restore-and-disaster-recovery.md)) —

@@ -42,6 +42,174 @@ $ alembic current
 
 For SQLite the file is created by this command if it does not exist.
 
+## A failed run changes nothing
+
+Every run of the chain is one transaction, on SQLite as on PostgreSQL. If
+anything in it fails, nothing it did is kept: the schema and the stamp are as
+they were before the command, and `alembic current` still prints the revision
+the run started from. There is no half-applied revision to repair first; fix
+the cause and run the command again. `downgrade` and `stamp` run the same way.
+
+PostgreSQL does this by itself. On SQLite it is the migration environment's
+doing. Left to its defaults, Alembic treats SQLite DDL as non-transactional and
+commits after each revision, and Python's `sqlite3` driver opens a transaction
+only before a statement that changes data, so a `CREATE TABLE` issued earlier
+would be permanent at once. The environment declares the run transactional, and
+every command that opens the database says so in its second line of output:
+
+```
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+```
+
+It also opens its SQLite connection with the driver's own transaction handling
+switched off, and starts each transaction with `BEGIN IMMEDIATE`. That
+connection belongs to the migrations alone; the application's connections keep
+the driver's default.
+
+Verified on SQLite, with a revision added after `0004` that adds a column,
+creates a table and then fails. Against a database at `0004`, one written by
+the 0.3.0 release among them, the failed upgrade left the file byte-for-byte as
+it was, still stamped `0004`. Against an empty database, it left no tables and
+no stamp. Up to 0.3.0, the failed upgrade of the database at `0004` kept the
+column and the table, and the one from an empty database left it stamped
+`0004` with every table in place. The test suite asserts both cases, plus a
+failure inside a batch rebuild and one while the stamp is being written, on
+SQLite and, in CI, on PostgreSQL 16.
+
+### A transaction SQLite ends by itself
+
+After some errors SQLite rolls back the whole transaction rather than the one
+statement that failed. Each of these did so when executed: a conflict on
+`INSERT OR ROLLBACK`, or on a constraint declared `ON CONFLICT ROLLBACK`;
+`RAISE(ROLLBACK, …)` in a trigger; and an `INSERT` stopped by
+`sqlite3.Connection.interrupt()`. The error goes back to the revision that
+issued the statement, and a revision that caught it and went on would run every
+later statement outside any transaction, each one committed on its own, the new
+stamp included.
+
+The environment refuses every statement a run issues once its transaction has
+ended, so the run fails at the first statement after the error, and what SQLite
+rolled back stays rolled back. PostgreSQL does the same by itself: after an
+error it refuses every statement until the transaction ends. Executed with a
+revision added after `0004` that catches the error of an `INSERT OR ROLLBACK`
+and then creates a table, on a database that was byte-for-byte the same
+afterwards and still at `0004`:
+
+```
+$ alembic upgrade head
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade 0004 -> carry_on, Catch a rejected insert and carry on.
+ERROR [alembic.util.messaging] Refusing to go on: the migration's transaction ended before the run did, so this statement would be committed on its own. SQLite rolls back the whole transaction after some errors, a conflict resolved with ROLLBACK or RAISE(ROLLBACK) in a trigger among them; a revision has to let such an error end the run.
+FAILED: Refusing to go on: the migration's transaction ended before the run did, so this statement would be committed on its own. SQLite rolls back the whole transaction after some errors, a conflict resolved with ROLLBACK or RAISE(ROLLBACK) in a trigger among them; a revision has to let such an error end the run.
+```
+
+The test suite asserts the same outcome when the caught error comes from an
+`INSERT OR ROLLBACK`, with more DDL or the stamp after it, or from
+`RAISE(ROLLBACK)` in a trigger, on SQLite and, in CI, on PostgreSQL 16, where
+those statements are syntax errors that abort the transaction. None of the
+revisions in the chain catches an error.
+
+### The write lock
+
+`BEGIN IMMEDIATE` takes the database's write lock before the run reads
+anything, and the run holds it until it commits. Two upgrades of one file
+started at the same moment therefore run one after the other. Executed three
+times: each time the first applied all four revisions and the second found
+nothing left to do. Up to 0.3.0, the second failed with
+`table audit_entries already exists` all three times.
+
+Every command that opens the database takes the lock, `current` and `check`
+included. If another connection holds it, the command waits five seconds, the
+`sqlite3` driver's default, and then stops, having changed nothing. Executed
+with a second process holding `BEGIN IMMEDIATE` on a database at `0003`, which
+was unchanged afterwards:
+
+```
+$ alembic upgrade head
+INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) database is locked
+```
+
+The test suite asserts that `current`, `check` and an upgrade with nothing
+left to do each stop while another connection holds the lock, and that a run
+holds the lock before it has written anything.
+
+A connection that only reads holds a command up as well, at its end rather
+than its start. In the rollback-journal mode the database runs in
+([Database setup](03-database-setup.md)), a transaction begun with
+`BEGIN IMMEDIATE` cannot commit while another connection has a read
+transaction open, even if it changed nothing. Executed with a second process
+holding a read transaction open: `current`, `check`, `stamp` and `upgrade` each
+failed at their commit with `database is locked`, after the same five-second
+wait, and the file was unchanged.
+
+With the service stopped, as the [upgrade procedure](13-upgrades.md) has it,
+nothing else has the database open. The lock does not make
+`CFM_DB_AUTO_UPGRADE` safe for several processes: a process queued behind a
+migration that takes longer than five seconds fails to start, and PostgreSQL
+runs take no such lock.
+
+### Handing the migrations a connection
+
+The environment also accepts an open SQLAlchemy connection in
+`config.attributes["connection"]`, for a caller that already holds one. It
+cannot reconfigure a connection it did not open, so it checks it before the
+first revision, and refuses one on which the run could not be one
+transaction: an SQLite connection with no transaction open when the run
+begins, which is what a new connection from `cfm.database.build_engine` is,
+because the driver opens one only before a statement that changes data; an
+SQLite connection opened with `autocommit=True`, whose `commit()` and
+`rollback()` do nothing; or a connection in `AUTOCOMMIT` on either database.
+Executed:
+
+```
+$ python -c "
+from alembic import command
+from cfm.database import build_engine
+from cfm.migrate import build_alembic_config
+url = 'sqlite:///./handed.db'
+with build_engine(url).connect() as connection:
+    config = build_alembic_config(url)
+    config.attributes['connection'] = connection
+    command.upgrade(config, 'head')
+"
+alembic.util.exc.CommandError: Refusing to migrate over a connection that is not inside a database transaction: each statement would be committed as it ran, and a run that failed part-way would leave the schema half-upgraded. Hand over a connection whose transactions are real (on SQLite, set isolation_level = None on the sqlite3 connection and emit BEGIN from the engine's 'begin' event, or connect with autocommit=False; on any database, do not use AUTOCOMMIT), or pass config.attributes['database_url'] instead and let the migrations open a connection of their own.
+```
+
+`handed.db` was left empty. An SQLite connection is accepted when it comes from
+an engine that sets `isolation_level = None` on each `sqlite3` connection and
+emits `BEGIN` from its `begin` event, the recipe in SQLAlchemy's SQLite
+documentation, or from one created with `connect_args={"autocommit": False}`
+on Python 3.12 or later. A connection already inside a transaction its caller
+began is accepted too, which on SQLite a connection from `build_engine` is once
+a statement that changes data has run through it; DDL or reads alone do not
+open one. The run then happens inside the caller's transaction, because
+Alembic leaves a transaction it did not begin to whoever began it. Executed on
+SQLite: the run was kept when the caller committed, and nothing of it was left
+when the caller rolled back or closed the connection without committing. The
+helpers in `cfm.migrate` pass a URL and never need any of this.
+
+### Scripts printed with `--sql`
+
+`alembic upgrade --sql` prints a run as SQL instead of executing it, wrapped
+the same way in one `BEGIN;` and one `COMMIT;`, on SQLite as on PostgreSQL. A
+script cannot include `0002`, whose data migration reads the `users` table and
+so needs a live database; `alembic upgrade 0002:head --sql` prints the rest of
+the chain.
+
+On SQLite, applying such a script is one transaction only if whatever applies
+it stops at the first error without committing. Executed with a script whose
+last revision held a statement that failed when applied, each time on a copy of
+a database at `0002`. Fed to `python -m sqlite3` on its standard input, the
+script's error was reported and the shell went on, exiting with status 0, and
+the closing `COMMIT;` kept every other statement, the new stamp included.
+`sqlite3.Connection.executescript()` raised at the error; closing the
+connection then, without a commit, left the file byte-for-byte as it was,
+while a commit kept everything that had run before the error.
+
 ## The refuse-to-start policy
 
 With `CFM_DB_AUTO_UPGRADE` unset or `false` — the default — the application
@@ -135,8 +303,10 @@ $ alembic upgrade head
 sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) table site_grants already exists
 ```
 
-The database is now stamped `0001` while its schema is not `0001`, and the
-upgrade has failed part-way. **Verify before you stamp**, as the error message
+The database is now stamped `0001` while its schema is not `0001`. The upgrade
+stopped at the first statement of `0002`; being one transaction, it changed
+nothing (the file was byte-for-byte what the stamp had left), but it fails the
+same way every time it is run. **Verify before you stamp**, as the error message
 itself says: compare the tables against the schema the target revision builds,
 and stamp the revision that matches what is actually there — not always `0001`.
 Take a backup first; recovering from a wrong stamp means restoring.
