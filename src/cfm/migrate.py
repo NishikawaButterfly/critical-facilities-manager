@@ -105,8 +105,8 @@ def ensure_fresh_schema(database_url: str) -> None:
 
     Used by the bootstrap and demo seed scripts, which only ever target
     fresh databases. A database that has tables but no revision stamp is
-    left untouched and reported, because migrating over it would fail
-    halfway through.
+    left untouched and reported, because migrating over it would fail at
+    the first table that already exists.
     """
     current = current_revision(database_url)
     if current is None and _has_tables(database_url):

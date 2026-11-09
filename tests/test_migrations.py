@@ -251,7 +251,7 @@ def test_upgrade_from_0001_carries_users_to_installation_scope(tmp_path: Path) -
 
 
 def test_ensure_fresh_schema_refuses_a_pre_migration_database(tmp_path: Path) -> None:
-    """Migrating over unstamped tables would fail halfway; refuse instead."""
+    """Migrating over unstamped tables would fail at the first of them; refuse instead."""
     url = _sqlite_url(tmp_path, "legacy-fresh.db")
     engine = build_engine(url)
     try:
