@@ -46,8 +46,9 @@ class Settings(BaseSettings):
     # X-Forwarded-For (the address the proxy appended) instead of the
     # reported client address. Off by default because the header is
     # client-writable — and while it is off, every request that carries
-    # the header anyway shares one lockout bucket, since the address it
-    # reports cannot be believed (see cfm.ratelimit.client_source).
+    # the header anyway counts against the address it reports and, since
+    # that address cannot be believed, against one shared lockout bucket
+    # as well (see cfm.ratelimit.client_sources).
     trusted_proxy: bool = False
     # Root directory of the content-addressed evidence store, created on
     # demand. Local filesystem only for now; an S3-compatible remote
